@@ -1,0 +1,2226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Threads in Java, one step at a time</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#EDF0F3; --surface:#FFFFFF; --code:#F3F5F8; --ink:#19212B; --muted:#566273; --line:#D3D9E1;
+  --accent:#3346C4; --accent-ink:#FFFFFF; --soft:#E6EAFA;
+  --thread:#0E7A6B; --thread-soft:#DDF1EE; --queue:#9A6208; --queue-soft:#F7EBD4; --reject:#B42318; --reject-soft:#FBE3E0;
+  --c-kw:#3346C4; --c-type:#0E6B5E; --c-str:#9A5A00; --c-com:#6B7686; --c-num:#A12A6B;
+  --sans:"Atkinson Hyperlegible", "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
+  --mono:"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#11161C; --surface:#182029; --code:#0F141A; --ink:#E3E8EE; --muted:#9AA6B4; --line:#2B3541;
+    --accent:#8FA0FF; --accent-ink:#0E1318; --soft:#1E2744;
+    --thread:#45C9B3; --thread-soft:#123430; --queue:#E5B24E; --queue-soft:#382A10; --reject:#F2877B; --reject-soft:#3D1B18;
+    --c-kw:#9CAAFF; --c-type:#5ED3BF; --c-str:#E8B75C; --c-com:#7F8B9A; --c-num:#F29AC8;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#11161C; --surface:#182029; --code:#0F141A; --ink:#E3E8EE; --muted:#9AA6B4; --line:#2B3541;
+  --accent:#8FA0FF; --accent-ink:#0E1318; --soft:#1E2744;
+  --thread:#45C9B3; --thread-soft:#123430; --queue:#E5B24E; --queue-soft:#382A10; --reject:#F2877B; --reject-soft:#3D1B18;
+  --c-kw:#9CAAFF; --c-type:#5ED3BF; --c-str:#E8B75C; --c-com:#7F8B9A; --c-num:#F29AC8;
+}
+*,*::before,*::after{box-sizing:inherit}
+html{scroll-padding-top:calc(env(safe-area-inset-top,0px) + 76px)}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:1.125rem;line-height:1.6;-webkit-text-size-adjust:100%}
+button{font:inherit;color:inherit}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px;border-radius:6px}
+
+/* top bar */
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--bg);border-bottom:1px solid var(--line)}
+.top-in{max-width:46rem;margin:0 auto;display:flex;align-items:center;gap:.75rem;padding:.6rem 1rem}
+.mapbtn{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:.35rem .8rem;cursor:pointer;font-weight:700}
+.where{flex:1;min-width:0}
+.where .ch{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:1rem}
+.where .pos{color:var(--muted);font-size:.875rem}
+.modebtn{border:0;background:none;color:var(--accent);cursor:pointer;font-size:.9rem;text-decoration:underline;text-underline-offset:3px;white-space:nowrap}
+.bar{height:4px;background:var(--line)}
+.bar i{display:block;height:100%;background:var(--thread);width:0;transition:width .25s}
+
+/* main */
+main{max-width:46rem;margin:0 auto;padding:1.5rem 1rem 8rem}
+.step{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:1.4rem 1.4rem 1.2rem;margin-bottom:1.5rem}
+.step h2{font-size:1.6rem;line-height:1.25;margin:0 0 1rem;letter-spacing:-.01em}
+.step h2:focus{outline:none}
+.snum{display:inline-block;min-width:2rem;color:var(--thread);font-weight:700}
+.step p{margin:.2rem 0 .8rem;max-width:40rem}
+.step ul,.step ol{margin:.2rem 0 .9rem;padding-left:1.4rem}
+.step li{margin:.3rem 0}
+.step li::marker{color:var(--muted)}
+code{font-family:var(--mono);font-size:.86em;background:var(--code);padding:.08em .32em;border-radius:5px}
+pre{margin:0}
+pre code{background:none;padding:0;font-size:.84rem;line-height:1.55;display:block;white-space:pre;tab-size:4}
+.codebox{background:var(--code);border:1px solid var(--line);border-radius:10px;padding:.85rem 1rem;overflow-x:auto;margin:.4rem 0 1rem}
+.out{border:1px dashed var(--muted);border-radius:10px;margin:.4rem 0 1rem;overflow:hidden}
+.out .lbl{font-size:.8rem;color:var(--muted);padding:.35rem 1rem 0}
+.out pre{padding:.3rem 1rem .8rem;overflow-x:auto}
+.tk{color:var(--c-kw);font-weight:600}.tt{color:var(--c-type)}.ts{color:var(--c-str)}.tc{color:var(--c-com);font-style:italic}.tn{color:var(--c-num)}
+.rem{background:var(--soft);border-left:4px solid var(--accent);border-radius:0 10px 10px 0;padding:.7rem 1rem;margin:1rem 0 .2rem;font-weight:700}
+.rem span{display:block;font-weight:400;font-size:.85rem;color:var(--muted);margin-bottom:.1rem}
+.quote{border-left:3px solid var(--line);padding:.1rem 0 .1rem .9rem;color:var(--muted);font-style:italic;margin:.4rem 0 .9rem}
+details.q{border:1px solid var(--line);border-radius:10px;margin:.6rem 0;background:var(--surface)}
+details.q summary{cursor:pointer;padding:.6rem 1rem;font-weight:700;list-style:none}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::after{content:"Show answer";float:right;font-weight:400;font-size:.85rem;color:var(--accent);margin-left:.6rem}
+details.q[open] summary::after{content:"Hide"}
+details.q.hint summary::after{content:"Show hint"}
+details.q.hint[open] summary::after{content:"Hide"}
+details.q .a{padding:0 1rem .8rem;border-top:1px solid var(--line)}
+details.q .a > *:first-child{margin-top:.7rem}
+.tbl{overflow-x:auto;margin:.4rem 0 1rem;border:1px solid var(--line);border-radius:10px}
+table{border-collapse:collapse;font-size:.92rem;min-width:100%}
+th,td{text-align:left;vertical-align:top;padding:.5rem .7rem;border-bottom:1px solid var(--line)}
+th{background:var(--code);font-weight:700;white-space:nowrap}
+tr:last-child td{border-bottom:0}
+td code{white-space:nowrap}
+kbd{font-family:var(--mono);font-size:.8em;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:.05em .4em;background:var(--code)}
+.t{color:var(--thread);font-weight:700}.qq{color:var(--queue);font-weight:700}.r{color:var(--reject);font-weight:700}
+
+/* bottom nav */
+.nav{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--bg);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom,0px)}
+.nav-in{max-width:46rem;margin:0 auto;display:flex;gap:.75rem;padding:.7rem 1rem;align-items:center}
+.nav button{border-radius:10px;padding:.7rem 1.2rem;cursor:pointer;font-weight:700;border:1px solid var(--line);background:var(--surface)}
+.nav .next{margin-left:auto;background:var(--accent);color:var(--accent-ink);border-color:var(--accent);min-width:8rem}
+.nav button:disabled{opacity:.4;cursor:default}
+.nav .hint{color:var(--muted);font-size:.85rem}
+@media (max-width:560px){.nav .hint{display:none}.step{padding:1.1rem 1rem}.step h2{font-size:1.35rem}}
+
+/* map drawer */
+.scrim{position:fixed;inset:0;background:rgba(10,14,20,.45);z-index:40;display:none}
+.drawer{position:fixed;top:0;bottom:0;left:0;width:min(24rem,92vw);background:var(--surface);z-index:41;transform:translateX(-102%);transition:transform .2s;overflow-y:auto;border-right:1px solid var(--line);padding:calc(env(safe-area-inset-top,0px) + 1rem) 1rem calc(env(safe-area-inset-bottom,0px) + 1rem)}
+.open .scrim{display:block}.open .drawer{transform:none}
+.drawer h2{margin:0 0 .6rem;font-size:1.2rem;display:flex;justify-content:space-between;align-items:center}
+.drawer h2 button{border:1px solid var(--line);background:none;border-radius:8px;padding:.2rem .6rem;cursor:pointer;font-size:.9rem}
+.drawer details{border-bottom:1px solid var(--line)}
+.drawer summary{cursor:pointer;padding:.55rem 0;font-weight:700;font-size:1rem}
+.drawer ol{list-style:none;margin:0 0 .6rem;padding:0}
+.drawer li button{display:flex;gap:.5rem;width:100%;text-align:left;border:0;background:none;padding:.3rem .4rem;border-radius:6px;cursor:pointer;font-size:.95rem;color:var(--muted)}
+.drawer li button:hover{background:var(--code)}
+.drawer li button.cur{background:var(--soft);color:var(--ink);font-weight:700}
+.drawer li button .ck{width:1rem;flex:none;color:var(--thread)}
+.drawer .reset{margin-top:1rem;border:0;background:none;color:var(--accent);text-decoration:underline;cursor:pointer;font-size:.9rem}
+
+/* simulator */
+.sim{border:2px solid var(--thread);border-radius:12px;padding:1rem;margin:.5rem 0 1rem}
+.sim .ctl{display:grid;grid-template-columns:repeat(auto-fit,minmax(9.5rem,1fr));gap:.6rem .8rem;margin-bottom:.8rem}
+.sim label{display:flex;flex-direction:column;font-size:.85rem;color:var(--muted);gap:.2rem}
+.sim input[type=number],.sim select{font:inherit;font-size:1rem;padding:.35rem .5rem;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)}
+.sim .chk{flex-direction:row;align-items:center;gap:.4rem}
+.sim .pre{display:flex;flex-wrap:wrap;gap:.4rem;margin-bottom:.8rem}
+.sim .pre button,.sim .act button,.rj .pols button{border:1px solid var(--line);background:var(--code);border-radius:999px;padding:.3rem .8rem;cursor:pointer;font-size:.88rem}
+.sim .act{display:flex;flex-wrap:wrap;gap:.5rem;margin:.6rem 0}
+.sim .act button.main{background:var(--thread);color:var(--surface);border-color:var(--thread);font-weight:700}
+.sim .code-line{font-family:var(--mono);font-size:.8rem;color:var(--muted);overflow-x:auto;white-space:nowrap;margin-bottom:.6rem}
+.lane{margin:.5rem 0}
+.lane .lh{font-size:.85rem;font-weight:700;margin-bottom:.25rem}
+.chips{display:flex;flex-wrap:wrap;gap:.3rem;min-height:1.9rem;align-items:center}
+.chip{font-family:var(--mono);font-size:.75rem;border-radius:6px;padding:.2rem .4rem;border:1.5px solid}
+.chip.th{border-color:var(--thread);background:var(--thread-soft);color:var(--thread)}
+.chip.qu{border-color:var(--queue);background:var(--queue-soft);color:var(--queue)}
+.chip.rj{border-color:var(--reject);background:var(--reject-soft);color:var(--reject)}
+.chip.empty{border-style:dashed;border-color:var(--line);background:none;color:var(--muted)}
+.more{font-size:.85rem;color:var(--muted)}
+.simlog{font-family:var(--mono);font-size:.78rem;background:var(--code);border-radius:8px;padding:.5rem .7rem;max-height:10rem;overflow:auto;margin-top:.6rem}
+.simlog div{white-space:nowrap}
+.simerr{color:var(--reject);font-weight:700;font-size:.95rem}
+.rj{border:2px solid var(--accent);border-radius:12px;padding:1rem;margin:.5rem 0 1rem}
+.rj .pols{display:flex;flex-wrap:wrap;gap:.4rem;margin-bottom:.8rem}
+.rj .pols button[aria-pressed=true],.sim .pre button.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.rj .row{display:flex;gap:.6rem;align-items:baseline;padding:.35rem 0;border-bottom:1px solid var(--line)}
+.rj .row:last-of-type{border-bottom:0}
+.rj .row b{font-family:var(--mono);font-size:.85rem;min-width:3.5rem}
+.rj .sum{margin-top:.6rem;font-weight:700}
+
+.parth{font-size:.85rem;color:var(--muted);margin:1rem 0 .2rem;font-weight:700}
+.wg{border:2px solid var(--thread);border-radius:12px;padding:1rem;margin:.5rem 0 1rem}
+.wg .ctl{display:grid;grid-template-columns:repeat(auto-fit,minmax(13rem,1fr));gap:.8rem;margin-bottom:.8rem}
+.wg label{display:flex;flex-direction:column;gap:.3rem;font-size:.9rem;color:var(--muted)}
+.wg label b{color:var(--ink)}
+.wg input[type=range]{width:100%;accent-color:var(--thread)}
+.wg .act{display:flex;flex-wrap:wrap;gap:.5rem;margin:.7rem 0}
+.wg button{border:1px solid var(--line);background:var(--code);border-radius:999px;padding:.35rem .85rem;cursor:pointer;font-size:.9rem}
+.wg button.main{background:var(--thread);color:var(--surface);border-color:var(--thread);font-weight:700}
+.wg button:disabled{opacity:.4;cursor:default}
+.am .big{font-size:2rem;font-weight:700;color:var(--thread);margin:.2rem 0 .6rem}
+.am .big small{display:block;font-size:.9rem;font-weight:400;color:var(--muted)}
+.am .tl{margin:.5rem 0}.am .tlh{font-size:.85rem;color:var(--muted);margin-bottom:.2rem}
+.am .tbar{display:flex;height:1.4rem;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--code)}
+.am .sg{display:block;height:100%}.am .sg.s{background:var(--queue)}.am .sg.p{background:var(--thread)}
+.am .legend{display:flex;flex-wrap:wrap;gap:1rem;font-size:.85rem;color:var(--muted);margin:.4rem 0 .8rem}
+.am .legend i{display:inline-block;width:.8rem;height:.8rem;border-radius:3px;margin-right:.35rem;vertical-align:-1px}
+.am .lg-s{background:var(--queue)}.am .lg-p{background:var(--thread)}
+.am .cr{display:grid;grid-template-columns:4.5rem 1fr 4rem;gap:.5rem;align-items:center;font-size:.85rem;margin:.15rem 0}
+.am .cb{height:.7rem;background:var(--code);border-radius:4px;overflow:hidden}.am .cb i{display:block;height:100%;background:var(--thread)}
+.am .ck2{color:var(--muted);font-family:var(--mono);font-size:.78rem}.am .cv{text-align:right;font-family:var(--mono);font-size:.8rem}
+.rc .rcgrid{display:grid;grid-template-columns:1fr auto 1fr;gap:.8rem;align-items:start}
+@media (max-width:560px){.rc .rcgrid{grid-template-columns:1fr}}
+.rc .th,.rc .mem{border:1px solid var(--line);border-radius:10px;padding:.6rem .7rem;background:var(--surface)}
+.rc .mem{text-align:center;border-color:var(--queue);align-self:center}
+.rc .thh{font-weight:700;font-size:.9rem;margin-bottom:.3rem}
+.rc .ops{margin:0 0 .4rem;padding-left:1.3rem;font-family:var(--mono);font-size:.8rem}
+.rc .ops li{padding:.1rem .3rem;border-radius:4px}
+.rc .ops li.cur{background:var(--soft);font-weight:600}.rc .ops li.done{color:var(--muted);text-decoration:line-through}
+.rc .reg{font-family:var(--mono);font-size:.85rem;margin-bottom:.5rem}
+.rc .cnt{font-family:var(--mono);font-size:1.3rem}.rc .cnt b{color:var(--queue)}
+.rc .verdict{font-weight:700;margin:.3rem 0}
+.sx .stbox{display:flex;flex-wrap:wrap;gap:.35rem;margin-bottom:.6rem}
+.sx .sb{font-family:var(--mono);font-size:.78rem;border:1.5px solid var(--line);border-radius:6px;padding:.25rem .45rem;color:var(--muted)}
+.sx .sb.on{border-color:var(--thread);background:var(--thread-soft);color:var(--thread);font-weight:700}
+.sx .now{margin:.3rem 0 .6rem}.sx .muted{color:var(--muted);font-size:.9rem}
+.sx .acts{display:flex;flex-wrap:wrap;gap:.4rem}
+.sx .acts button{font-family:var(--mono);font-size:.8rem;border-radius:8px}
+.sx .acts button.bad{border-color:var(--reject);color:var(--reject);background:var(--reject-soft)}
+.simlog{font-family:var(--mono);font-size:.78rem;background:var(--code);border-radius:8px;padding:.5rem .7rem;max-height:11rem;overflow:auto;margin-top:.6rem}
+.simlog div{white-space:pre-wrap}
+
+.an{background:var(--queue-soft);border-left:4px solid var(--queue);border-radius:0 10px 10px 0;padding:.7rem 1rem;margin:.3rem 0 1rem}
+.an span{display:block;font-size:.85rem;color:var(--queue);font-weight:700;margin-bottom:.15rem}
+.an ul{margin:.2rem 0;padding-left:1.2rem}
+details.q.sol summary::after{content:"Show solution"}
+details.q.sol[open] summary::after{content:"Hide"}
+details.q.sol .codebox{margin-top:.7rem}
+@media (prefers-reduced-motion: reduce){*{transition:none !important}}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="top-in">
+    <button class="mapbtn" id="mapbtn" aria-controls="drawer" aria-expanded="false">Map</button>
+    <div class="where"><div class="ch" id="chname"></div><div class="pos" id="pos"></div></div>
+    <button class="modebtn" id="modebtn"></button>
+  </div>
+  <div class="bar" aria-hidden="true"><i id="bar"></i></div>
+</header>
+
+<main id="main" aria-live="polite"></main>
+
+<nav class="nav" aria-label="Step navigation">
+  <div class="nav-in">
+    <button id="back">Back</button>
+    <span class="hint">Keys: <kbd>←</kbd> <kbd>→</kbd></span>
+    <button id="next" class="next">Next</button>
+  </div>
+</nav>
+
+<div id="shell">
+  <div class="scrim" id="scrim"></div>
+  <aside class="drawer" id="drawer" aria-label="Map of all steps">
+    <h2>Map <button id="closemap">Close</button></h2>
+    <div id="maplist"></div>
+    <button class="reset" id="reset">Clear my progress</button>
+  </aside>
+</div>
+
+<script>
+/* ---------- tiny builders ---------- */
+const P=h=>['p',h], C=(s,l)=>['code',s,l||'java'], O=s=>['out',s], R=h=>['rem',h], Q=(q,a)=>['q',q,a], W=n=>['w',n], Y=h=>['quote',h];
+const TB=h=>['p','<div class="tbl"><table>'+h+'</table></div>'];
+const S=(t,...x)=>({t,x});
+const AN=h=>['an',h], SOL=(s,o)=>['sol',s,o];
+
+/* ---------- content ---------- */
+const CH=[
+{part:"Start",t:"Start here",steps:[
+S("How this page works",
+ P(`One idea per screen. Read it, then press <b>Next</b> (or the <kbd>→</kbd> key).`),
+ P(`<kbd>←</kbd> goes back. Your place is saved in this browser.`),
+ P(`<b>Map</b> (top left) shows every step, grouped by file: <b>01</b> and <b>02</b>.`),
+ P(`Low on focus? Read the <b>Remember</b> box first. Then the rest.`),
+ P(`Look for two kinds of screens: <b>Picture it</b> (a real-life comparison) and <b>Example</b> (real code with its real output).`),
+ P(`Steps marked <b>★ Deeper</b> go further: foundations for the next lectures. Fine to skip on a first pass.`),
+ R(`Small steps. You don't need to hold everything at once.`)),
+S("The whole topic in six ideas",
+ P(`<ol><li>We use threads for <b>speed</b>: use all cores, or do other work while waiting on IO.</li>
+ <li>Threads of one process <b>share memory</b>. That's their power, and the source of every bug.</li>
+ <li><b>Amdahl's law</b>: the part that can't run in parallel limits your speed-up.</li>
+ <li>A thread is <b>heavy</b> (~1 MB, a call to the OS). Its task (<code>Runnable</code>) is light.</li>
+ <li>A thread has <b>6 states</b>. You can't force-stop it; you can only <b>ask</b> (<code>interrupt</code>).</li>
+ <li><b>Daemon</b> threads are killed at exit. <b>Virtual</b> threads make waiting cheap.</li></ol>`),
+ R(`Chapters 1–12 = file 01. Chapters 13–24 = file 02. Chapter 25 = practice: write it yourself.`)),
+S("How I checked the facts",
+ P(`Every code snippet and every output on this page was run on a real JDK 21 (Linux, 1 CPU core). Other facts (hardware speeds, OS behaviour, JDK history) were checked against the JDK docs and JEPs. Where an output differs between runs, the page says so.`),
+ R(`If an output says "varies", that's part of the lesson.`)),
+S("The course roadmap (from the lecture)",
+ P(`This lecture was session 1 of 4: threads, pools, and a first look at virtual threads.`),
+ P(`What comes next, in the lecturer's order:`),
+ P(`<ol><li>Exceptions in pools: a few more examples</li><li>How memory is organised → <b>visibility</b></li><li>CPU caches and <b>MESI</b></li><li><b>Ordering</b> (reordering, happens-before)</li><li><code>synchronized</code>: monitors, the <b>wait set</b>, how a lock is taken</li><li><b>Locks</b>, including lock sharding</li><li><b>Non-blocking</b> algorithms</li><li>Later: reactive programming vs virtual threads</li></ol>`),
+ P(`The <b>★ Deeper</b> steps on this page prepare exactly these topics.`),
+ P(`Also from the lecture: the homework includes comparing pools with virtual threads under load, and the homework reviews contain extra material. The lecturer says watching them is not optional.`),
+ R(`★ steps = your preparation for lectures 2–4.`)),
+]},
+
+/* ===================== FILE 01 ===================== */
+{part:"01",t:"Why start with basics",steps:[
+S("The lecturer's warning",
+ P(`Many developers know names like "thread-safe collection".`),
+ P(`But at an interview they get: "write a high-load service; now split this collection into a read path and a write path — many reads, few writes". They freeze.`),
+ P(`At a hedge fund the next question is "now shard it".`),
+ P(`All of that is <b>fairly simple</b> once the basics are solid.`),
+ R(`Strong basics make the hard questions easy.`)),
+S("An interview question that exposes weak basics",
+ Q(`One request on your application server throws an exception. What happens to the server?`,
+   `<p>Nothing happens to the server. Only that request's thread is affected. (Full answer in your 04 page, chapter 12.)</p><p>People who don't know what a thread is start guessing here.</p>`),
+ P(`Real trading code is often not exotic. The hard part is the <b>interview</b>: they make you write code and probe every hole.`),
+ R(`This file builds the model that makes everything else non-magical.`))
+]},
+
+{part:"01",t:"What multithreading is for",steps:[
+S("The goal is performance",
+ Y(`"A junior says: why should I learn multithreading? My programs are fast. What is the goal?"`),
+ P(`Answer: <b>performance</b> — more work per second (throughput), or faster answers (latency).`),
+ P(`Computers have many cores. One thread uses one core. The other cores sit idle.`),
+ R(`Threads let one program use many cores at the same time.`)),
+S("Kind 1: CPU-bound work",
+ P(`The CPU is busy 100 % of the time.`),
+ P(`Examples: hashing, encryption, video encoding, matrix math, number crunching.`),
+ P(`<b>What threads give you:</b> use <b>all</b> cores instead of one.`),
+ R(`CPU-bound: threads = more cores working.`)),
+S("Kind 2: IO-bound work",
+ P(`The CPU mostly <b>waits</b> for something slow.`),
+ P(`Examples: HTTP calls, database queries, disk, network sockets.`),
+ P(`<b>What threads give you:</b> while one thread waits, another does useful work.`),
+ R(`IO-bound: threads = something useful happens during the waiting.`)),
+S("Picture it: a kitchen",
+ AN(`A <b>chef</b> is a CPU core. Chopping vegetables is CPU work. Waiting for the oven is IO.`),
+ P(`<b>CPU work:</b> 4 chefs chop 4× faster — but only if you really have 4 chefs (cores). 4 helpers sharing one chef's knife chop no faster.`),
+ P(`<b>IO work:</b> while one dish is in the oven, the chef starts the next. One chef can keep many ovens busy.`),
+ R(`CPU work needs more cores. IO work needs more things waiting at once.`)),
+S("Example: same threads, opposite results",
+ P(`4 tasks, run with 1 thread and with 4 threads. Once with pure computing, once with a 1-second wait (<code>Thread.sleep</code> stands in for a slow network call: the thread waits and uses no CPU).`),
+ P(`The executor is just a helper that runs the tasks on N threads and waits for them (you know it from the pools page).`),
+ C(String.raw`static long cpuWork() { long x = 0; for (long i = 0; i < 200_000_000L; i++) x += i % 7; return x; }
+
+static long time(int threads, Callable<?> task, int tasks) throws Exception {
+    long t0 = System.currentTimeMillis();
+    try (ExecutorService ex = Executors.newFixedThreadPool(threads)) {
+        for (int i = 0; i < tasks; i++) ex.submit(task);
+    }                                                // close() waits for all tasks
+    return System.currentTimeMillis() - t0;
+}
+
+public static void main(String[] args) throws Exception {
+    Callable<Long>   cpu = () -> cpuWork();                              // pure computing
+    Callable<Object> io  = () -> { Thread.sleep(1000); return null; };   // pretend network call
+    System.out.println("CPU task x4, 1 thread : " + time(1, cpu, 4) + " ms");
+    System.out.println("CPU task x4, 4 threads: " + time(4, cpu, 4) + " ms");
+    System.out.println("IO  task x4, 1 thread : " + time(1, io, 4) + " ms");
+    System.out.println("IO  task x4, 4 threads: " + time(4, io, 4) + " ms");
+}`),
+ O(`CPU task x4, 1 thread : 655 ms
+CPU task x4, 4 threads: 597 ms     <- about the same
+IO  task x4, 1 thread : 4002 ms
+IO  task x4, 4 threads: 1001 ms    <- 4× faster`),
+ P(`This machine has <b>1 core</b>. For CPU work, 4 threads just take turns on it: no gain. On a 4-core laptop the second line would drop to roughly a quarter.`),
+ P(`The IO tasks barely touch the CPU. They only wait — and 4 threads can wait at the same time, even on 1 core.`),
+ R(`CPU work: limited by cores. IO work: limited by how many can wait at once.`)),
+S("How slow is \"slow\"? The speed ladder",
+ P(`From fast to slow (rough orders of magnitude; real numbers vary by hardware):`),
+ TB(`<tr><th>Where</th><th>Rough time</th></tr>
+ <tr><td>CPU register, L1 cache</td><td>~1 ns</td></tr>
+ <tr><td>L2, L3 cache</td><td>a few ns to tens of ns</td></tr>
+ <tr><td>RAM</td><td>~100 ns</td></tr>
+ <tr><td>SSD read, network in a data centre</td><td>tens to hundreds of µs (same league)</td></tr>
+ <tr><td>HDD (spinning disk) seek</td><td>~10 ms</td></tr>`),
+ P(`The HDD is slower than the network. The lecturer admitted he believed the opposite for years.`),
+ R(`CPU work = nanoseconds. Disk and network = far slower.`)),
+S("The lecturer's hash example",
+ P(`Compute a hash of a 1 MB string, then write it to an HDD. The disk part is about <b>1000× slower</b>.`),
+ P(`(Take the numbers as illustrative: hashing a full megabyte takes about a millisecond on a modern core. But one HDD seek alone is ~10 ms. For a <b>small</b> record, the CPU vs disk gap really is 1,000–1,000,000×.)`),
+ P(`So IO-bound threads barely touch the CPU. They mostly sit waiting.`),
+ R(`For IO work you can (and should) have far more threads than cores.`)),
+S("\"How do I know my code is CPU-heavy?\"",
+ P(`<b>Look</b> at what it does: arithmetic, hashing, crypto, media encoding → CPU-heavy.`),
+ P(`<b>Measure</b>: run a load test and watch CPU use. If the CPU is already at 100 %, more threads won't help.`),
+ P(`A student suggested adding threads while the CPU has room. The lecturer called that a "live benchmark": possible, but not the usual design.`),
+ R(`Look at the work, then measure CPU use.`)),
+S("What about GPUs?",
+ P(`You can send heavy math to a GPU (CUDA; TornadoVM for Java).`),
+ Y(`"Most servers you deploy to have no GPU, only CPU. We design for an ordinary company with ordinary hardware."`),
+ R(`This course is about CPUs and ordinary servers.`))
+]},
+
+{part:"01",t:"Process vs thread",steps:[
+S("The one-line difference",
+ P(`A <b>process</b> has its own isolated memory.`),
+ P(`<b>Threads</b> live inside a process and <b>share</b> its memory.`),
+ R(`Process = isolated memory. Threads = shared memory.`)),
+S("Picture it: houses and flatmates",
+ AN(`A <b>process</b> is a house. <b>Threads</b> are flatmates living in it.`),
+ P(`Flatmates share the fridge (the heap). Anyone can put food in or take it out, instantly. Fast… and it's also how someone eats your yoghurt.`),
+ P(`Each flatmate has a private notebook (their stack). Nobody else reads it.`),
+ P(`Another house (another process) can't open your fridge. To share, you phone them or send a courier (IPC). Slower, but nobody touches your yoghurt.`),
+ R(`Same house = shared fridge = fast but risky.`)),
+S("The JVM is just a process",
+ P(`The JVM is an ordinary OS process, like <code>ls</code>, <code>echo</code>, Chrome or Firefox.`),
+ P(`Through a call to the OS it can ask for <b>independent activities</b> — threads — and run parts of the program on them.`),
+ R(`JVM = one process. Your threads live inside it.`)),
+S("Why Chrome uses many processes",
+ P(`Open Task Manager: Chrome runs as <b>many</b> processes. That's on purpose.`),
+ P(`The lecturer's idea: to the scheduler, processes are roughly equal, so more processes = more chances to run.`),
+ P(`More precisely: Linux schedules <b>threads</b>, not processes, so extra processes don't buy extra CPU by themselves. The main real reason for Chrome is <b>isolation</b>: one crashing tab doesn't kill the others, and each tab can be locked in a security sandbox.`),
+ P(`<b>The price:</b> two processes can't simply share objects. Pipes and sockets are much slower than memory. Shared memory segments and memory-mapped files are fast, but they hold only raw bytes (no Java objects), and you must coordinate access yourself. Workable, but awkward.`),
+ R(`Processes = isolation. Threads = fast sharing.`)),
+S("The trading example",
+ P(`A trading app has 10,000 clients. A politician says something. All 10,000 press <b>Sell</b> at the same moment.`),
+ P(`Whose order reaches the exchange first depends on how fast your system turns clicks into orders.`),
+ P(`Hot data (order book, positions, cache) in <b>one process</b>, 1,000 threads reading and writing it at RAM speed → you win.`),
+ P(`Spread over several processes talking through a slow channel → slow, and painful to build.`),
+ R(`Threads + shared memory = speed. Shared memory = every difficulty in this course.`)),
+S("What to say at an interview",
+ P(`A <b>process</b> is an OS unit with its own isolated address space.`),
+ P(`A <b>thread</b> is an independent activity <b>inside</b> a process. It has its own stack and program counter, but shares the process's heap with the other threads.`),
+ P(`Threads exchange objects at memory speed. Processes need IPC: pipes and sockets (slower), or shared memory (fast, but raw bytes only and awkward).`),
+ R(`Own stack, shared heap — that's a thread.`))
+]},
+
+{part:"01",t:"The OS scheduler",steps:[
+S("1–2: asking for a thread, giving it work",
+ P(`<b>1.</b> The JVM asks the OS: "create me a thread". The OS creates it and says "OK". From then on the OS <b>scheduler</b> (a key part of the OS) decides when it runs.`),
+ P(`<b>2.</b> The JVM gives that thread something to execute. In Java terms: the <code>Runnable</code>.`),
+ R(`The OS owns the thread. Java gives it the work.`)),
+S("3: the scheduler decides when",
+ P(`The scheduler runs your thread <b>when it sees fit</b>. The interaction is <b>asynchronous</b>: you can't force "run it right now".`),
+ Y(`"The scheduler is much smarter than us; it knows how to run the maximum number of stacks."`),
+ R(`Starting a thread ≠ it runs immediately.`)),
+S("Example: start() doesn't mean \"now\"",
+ C(String.raw`Thread t = new Thread(() -> System.out.println("2. the new thread runs"));
+t.start();
+System.out.println("1. main continues right after start()");`),
+ O(`1. main continues right after start()
+2. the new thread runs`),
+ P(`<code>start()</code> returns at once. The new thread runs when the scheduler gets to it — here, after main's next line.`),
+ R(`start() = "please schedule this". Not "run it right now".`)),
+S("Example: who finishes first?",
+ P(`3 threads, exactly the same work. Which finishes first?`),
+ C(String.raw`List<String> finished = Collections.synchronizedList(new ArrayList<>());
+List<Thread> threads = new ArrayList<>();
+for (String name : List.of("A", "B", "C")) {
+    Thread t = new Thread(() -> {
+        long x = 0;
+        for (int i = 0; i < 30_000_000; i++) x += i;   // the same work for everyone
+        finished.add(name + (x < 0 ? "?" : ""));       // use x so the JIT can't skip the loop
+    });
+    threads.add(t);
+    t.start();
+}
+for (Thread t : threads) t.join();
+System.out.println(finished);`),
+ O(`program run 1: [A, C, B]
+program run 2: [B, C, A]
+program run 3: [A, B, C]`),
+ P(`Same code, a different order every run. The scheduler decides, not your code.`),
+ R(`Never rely on thread order. If order matters, you must enforce it (join, locks, queues).`)),
+S("★ Deeper: starvation — who does the work?",
+ P(`<b>Starvation</b> = a thread is ready to work but rarely or never gets its turn (a core, a lock, a task), because others keep getting it first.`),
+ P(`The lecturer checked for it live: he printed which worker ran each of 1000 tasks in his pool. The same check with a real pool of 4 workers:`),
+ C(String.raw`for (int run = 1; run <= 3; run++) {
+    Map<String, Integer> perWorker = new ConcurrentHashMap<>();
+    try (ExecutorService pool = Executors.newFixedThreadPool(4)) {
+        for (int i = 0; i < 1000; i++) {
+            pool.submit(() -> perWorker.merge(Thread.currentThread().getName(), 1, Integer::sum));
+        }
+    }
+    System.out.println("run " + run + ": " + new TreeMap<>(perWorker));
+}`),
+ O(`run 1: {pool-1-thread-1=826, pool-1-thread-2=1, pool-1-thread-3=2, pool-1-thread-4=171}
+run 2: {pool-2-thread-1=997, pool-2-thread-2=1, pool-2-thread-3=1, pool-2-thread-4=1}
+run 3: {pool-3-thread-1=1, pool-3-thread-2=997, pool-3-thread-3=1, pool-3-thread-4=1}`),
+ P(`Very uneven: in run 2 one worker did 997 of 1000. That's still fine. Every task ran; the tasks are tiny, and whichever worker is on the core keeps grabbing the next one.`),
+ P(`It becomes <b>real starvation</b> when some work never runs: a thread that never wins an unfair lock, or low-priority tasks stuck behind an endless stream of new ones. Fair locks (<code>new ReentrantLock(true)</code>) are one tool — in the locks lecture.`),
+ R(`Uneven is normal. "Never gets a turn" is starvation.`)),
+S("4: it juggles everything on the machine",
+ P(`Your JVM, Chrome, a YouTube video, your IDE — the scheduler shares the cores between all of them.`),
+ P(`A student asked why the IDE freezes while YouTube plays smoothly. The scheduler has its own idea of who is more important — in the lecturer's words, "from the OS's perspective YouTube is the favourite".`),
+ R(`Your program is one of many competing for cores.`)),
+S("5: OS states vs Java states",
+ P(`The OS has its own thread states (<i>ready</i>, <i>running</i>, and more).`),
+ P(`<b>Java doesn't show them.</b> A started thread that isn't waiting is just <code>RUNNABLE</code> — whether it's on a core right now or queued for one.`),
+ R(`RUNNABLE = "on a core OR ready to be". Java doesn't tell which.`)),
+S("6: the only real lever — affinity",
+ P(`<b>Thread affinity</b>: asking the OS to keep a thread on a specific core.`),
+ P(`Not part of the JDK. Done with native libraries (e.g. OpenHFT Affinity) or the Linux <code>taskset</code> tool. Used heavily in low-latency trading.`),
+ P(`Everything else is a hint at best. <code>Thread.setPriority</code>, for example, is ignored by HotSpot on Linux by default.`),
+ R(`Affinity is a real lever. Priority is just a wish.`)),
+S("7: what happens to blocked threads",
+ Q(`All 4 threads of my pool are blocked writing to disk. Does the CPU just sit idle?`,
+   `<p><b>Yes</b>, for your program. The OS <b>parks</b> blocked threads ("come back when you have work") and gives the core to someone else.</p><p>But the OS won't create more threads for you. For more concurrency you need more threads (expensive) — or virtual threads.</p>`),
+ R(`Blocked threads use no CPU, but they also do no work.`))
+]},
+
+{part:"01",t:"The limit: Amdahl's law",steps:[
+S("\"I'll just parallelise it\" is wrong",
+ P(`Some part of almost every program <b>must</b> run in order, on one thread.`),
+ P(`That part doesn't get faster when you add threads.`),
+ R(`More threads only speed up the parallel part.`)),
+S("Picture it: moving house",
+ AN(`Moving house. Packing boxes can be split: 4 friends pack about 4× faster. But there's <b>one truck</b> and <b>one road</b>. The drive takes the same time however many friends you invite.`),
+ P(`Packing = the parallel part (p). The drive = the serial part (1 − p).`),
+ P(`Invite 100 friends: packing takes minutes, but you still sit through the whole drive.`),
+ R(`The drive is your ceiling.`)),
+S("The formula",
+ P(`<b>p</b> = fraction of the work that can run in parallel. <b>n</b> = number of processors (threads).`),
+ C(`             1
+S(n) = -----------------
+        (1 − p) + p / n`,'text'),
+ P(`<code>(1 − p)</code> = the serial part: it always takes the same time.`),
+ P(`<code>p / n</code> = the parallel part, split across n processors.`),
+ R(`Speed-up = old time ÷ new time.`)),
+S("The ceiling",
+ P(`Add infinite processors: <code>p / n</code> → 0. What's left is only the serial part.`),
+ C(`maximum speed-up = 1 / (1 − p)`,'text'),
+ P(`p = 0.9 (90 % parallel) → at most <b>10×</b>. Ever. No matter how many cores.`),
+ R(`The serial part sets a hard ceiling.`)),
+S("The table (recomputed and checked)",
+ TB(`<tr><th>p \\ n</th><th>1</th><th>2</th><th>4</th><th>8</th><th>16</th><th>32</th><th>64</th><th>1000</th></tr>
+ <tr><td>0.50</td><td>1.00</td><td>1.33</td><td>1.60</td><td>1.78</td><td>1.88</td><td>1.94</td><td>1.97</td><td>2.00</td></tr>
+ <tr><td>0.75</td><td>1.00</td><td>1.60</td><td>2.29</td><td>2.91</td><td>3.37</td><td>3.66</td><td>3.82</td><td>3.99</td></tr>
+ <tr><td><b>0.90</b></td><td>1.00</td><td>1.82</td><td><b>3.08</b></td><td>4.71</td><td>6.40</td><td>7.80</td><td>8.77</td><td>9.91</td></tr>
+ <tr><td>0.95</td><td>1.00</td><td>1.90</td><td>3.48</td><td>5.93</td><td>9.14</td><td>12.55</td><td>15.42</td><td>19.63</td></tr>
+ <tr><td>0.99</td><td>1.00</td><td>1.98</td><td>3.88</td><td>7.48</td><td>13.91</td><td>24.43</td><td>39.26</td><td>90.99</td></tr>`),
+ P(`The lecturer's example: 90 % parallel + 4 threads = only <b>~3×</b>, not 4×.`),
+ R(`Even 90 % parallel code gets 3×, not 4×, on 4 cores.`)),
+S("Try it yourself",
+ P(`Move the sliders. Watch the <span class="qq">serial</span> part stay the same size while the <span class="t">parallel</span> part shrinks.`),
+ W('amdahl'),
+ R(`Set p to 0.5 and push n to the max. You never pass 2×.`)),
+S("Example: the formula, measured",
+ P(`A job with 400 ms of serial waiting + 400 ms of parallel waiting, so p = 0.5. Split the parallel part across n threads and time it:`),
+ C(String.raw`for (int n : new int[]{1, 2, 4, 8}) {
+    long t0 = System.currentTimeMillis();
+    Thread.sleep(400);                                   // serial part: one thread only
+    List<Thread> threads = new ArrayList<>();
+    for (int i = 0; i < n; i++) {                        // parallel part: split into n pieces
+        Thread t = new Thread(() -> {
+            try { Thread.sleep(400 / n); }
+            catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        });
+        threads.add(t);
+        t.start();
+    }
+    for (Thread t : threads) t.join();
+    long ms = System.currentTimeMillis() - t0;
+    System.out.printf("n=%d: %d ms, speed-up %.2f (formula for p=0.5: %.2f)%n",
+            n, ms, 800.0 / ms, 1 / (0.5 + 0.5 / n));
+}`),
+ O(`n=1: 803 ms, speed-up 1.00 (formula for p=0.5: 1.00)
+n=2: 601 ms, speed-up 1.33 (formula for p=0.5: 1.33)
+n=4: 501 ms, speed-up 1.60 (formula for p=0.5: 1.60)
+n=8: 451 ms, speed-up 1.77 (formula for p=0.5: 1.78)`),
+ P(`Real timings, same numbers as the formula. Going from 4 to 8 threads saved only 50 ms, because the 400 ms serial part never moves.`),
+ R(`Amdahl isn't theory. You can measure it.`)),
+S("Worked example: averaging a file",
+ P(`<ol><li>Read a file of 1,000,000 lines from disk.</li><li>Split into 3 chunks, compute 3 partial averages in parallel (3 threads).</li><li>Combine the 3 numbers — instant.</li></ol>`),
+ P(`Step 2 parallelises perfectly.`),
+ P(`Step 1 usually <b>doesn't</b>: a disk reads bytes in sequence; a database read is one call.`),
+ Q(`If step 1 takes 50 % of the time, what's the best possible speed-up?`,`<p><b>2×</b>, even with infinite threads on step 2. p = 0.5 → ceiling 1 / 0.5 = 2.</p>`),
+ R(`Find the serial step before counting threads.`)),
+S("The takeaway",
+ Y(`"Don't think first about the number of threads. Think first about the parts that cannot be parallelised — and whether you can change the design so that they can."`),
+ P(`<ul><li>One disk is sequential? Use two disks and read two ranges.</li><li>One DB call? Maybe two shards.</li></ul>`),
+ P(`If you can't shrink the serial part, "you can have a million threads, it won't matter".`),
+ R(`Shrink the serial part first. Then add threads.`)),
+S("Beyond the lecture: two related ideas",
+ P(`<b>Gustafson's law</b>: the mirror view. With a <b>bigger</b> problem, the parallel part usually grows, so more cores stay useful.`),
+ P(`<b>Sizing formula</b> (<i>Java Concurrency in Practice</i>):`),
+ C(`threads ≈ cores × targetCpuUse × (1 + waitTime / computeTime)`,'text'),
+ P(`The more a task waits, the more threads you can use.`),
+ R(`Amdahl = fixed problem. Gustafson = growing problem.`))
+]},
+
+{part:"01",t:"Threads are heavy",steps:[
+S("\"How much does a thread weigh?\"",
+ P(`A student said 8 MB. The lecturer tried to measure it for this lesson: "incredibly hard". The JVM and OS optimise a lot, and numbers differ between runs and systems.`),
+ P(`<b>~1 MB is usually close.</b> Checked: default stack size (<code>-Xss</code> / <code>ThreadStackSize</code>) on JDK 21 Linux x64 = <b>1024 KB</b>.`),
+ P(`The OS <b>reserves</b> that address range, but uses real memory only as the stack grows. That's why measuring is hard.`),
+ R(`A platform thread ≈ 1 MB of reserved stack.`)),
+S("Creating a thread is a conversation with the OS",
+ P(`"Give me a thread with such-and-such stack" costs <b>time</b> and <b>memory</b>.`),
+ P(`Measured here: creating, starting and finishing an <b>empty</b> platform thread took about <b>50 µs</b>. (The notes say "milliseconds-ish" — that's too high on a modern machine, but the point stands.)`),
+ O(`platform: create+start+join avg = 47 µs
+virtual:  create+start+join avg = 6 µs`),
+ P(`A small task (a few operations) takes nanoseconds, so creating its thread can cost 1,000× more than the task itself.`),
+ R(`Thread creation is expensive compared with small tasks.`)),
+S("Picture it: hiring vs a sticky note",
+ AN(`Creating a thread = <b>hiring an employee</b>: contract, desk, laptop, paperwork. The task (<code>Runnable</code>) = a <b>sticky note</b>: "send this email".`),
+ P(`Hiring someone for every sticky note, then firing them, is absurd. You hire a few people once and hand them notes all day. That's a thread pool.`),
+ P(`A virtual thread is like a freelancer who only occupies a desk while actually working.`),
+ R(`Hire once, hand out many notes.`)),
+S("How many threads can you have?",
+ Y(`"You cannot create tens of thousands of threads. 20–30 thousand in an ordinary program → most likely OutOfMemoryError. Up to about a thousand is usually enough."`),
+ P(`The error you'd see: <code>OutOfMemoryError: unable to create native thread: possibly out of memory or process/resource limits reached</code>.`),
+ P(`(Big bank servers are a different story. This is a rule of thumb, not a law.)`),
+ R(`Thousands: OK. Tens of thousands: ask yourself what you're doing.`)),
+S("Heavy container, light payload",
+ P(`The <code>Runnable</code> is tiny: a few instructions, a few bytes.`),
+ Y(`"If you new Thread().start() on every whim, there is no talk of any low latency."`),
+ P(`This gap — heavy thread, light task — is the reason for:`),
+ P(`<ul><li><b>Thread pools</b>: never <code>new Thread(...).start()</code> per request; reuse threads (files 03, 04).</li><li><b>Virtual threads</b>: many blocked threads waste ~1 MB each and burden the scheduler (chapter 20).</li></ul>`),
+ R(`Heavy thread + light task → pools and virtual threads.`))
+]},
+
+{part:"01",t:"How many threads? (first rule)",steps:[
+S("The rule of thumb",
+ TB(`<tr><th>Workload</th><th>Threads</th></tr>
+ <tr><td>CPU-bound</td><td>number of cores, maybe ×2 or ×4 — <b>benchmark it</b></td></tr>
+ <tr><td>IO-bound (files, network, DB)</td><td>many more than cores; CPU isn't the bottleneck; <b>virtual threads</b> are most likely the answer</td></tr>
+ <tr><td>Mixed</td><td>measure; think about the serial part (Amdahl) before adding threads</td></tr>`),
+ P(`Core count in Java: <code>Runtime.getRuntime().availableProcessors()</code>.`),
+ R(`CPU → cores. IO → many, or virtual. Always measure.`))
+]},
+
+{part:"01",t:"Memory: stack vs heap",steps:[
+S("The picture",
+ C(`JVM process
+┌──────────────────────────────────────────────────────┐
+│  HEAP  (shared by ALL threads)                       │
+│  objects, arrays, static fields, collections, ...    │
+└──────────────────────────────────────────────────────┘
+   ▲             ▲             ▲
+┌──┴───────┐  ┌──┴───────┐  ┌──┴───────┐
+│ Thread A │  │ Thread B │  │ Thread C │   each has its OWN:
+│  stack   │  │  stack   │  │  stack   │   - call stack (frames, locals, params)
+│  PC      │  │  PC      │  │  PC      │   - program counter
+└──────────┘  └──────────┘  └──────────┘   - ThreadLocal values`,'text'),
+ R(`Stacks are private. The heap is shared.`)),
+S("The stack is private",
+ P(`Local variables and method parameters live on the thread's stack.`),
+ P(`No other thread can ever see them.`),
+ Y(`"A thread is basically a stack."`),
+ C(String.raw`void work() {
+    int local = 0;          // on this thread's stack: private, always safe
+    local++;
+}`),
+ R(`Locals are always thread-safe.`)),
+S("The heap is shared",
+ P(`Every object lives on the heap. Any thread with a reference can read and write it.`),
+ C(String.raw`static int counter = 0;                     // on the heap: shared
+List<String> names = new ArrayList<>();     // the list object: on the heap`),
+ P(`Careful: a local <b>variable</b> holding a reference is private, but the <b>object</b> it points to is on the heap. If you pass it to another thread, it's shared.`),
+ R(`An object reachable from two threads = a possible conflict.`)),
+S("Picture it: notebook vs whiteboard",
+ AN(`Your <b>stack</b> is your private notebook. The <b>heap</b> is the office whiteboard.`),
+ P(`What's in your notebook, nobody else can change. What's on the whiteboard, anyone can wipe and overwrite.`),
+ R(`Notebook = local variables. Whiteboard = objects and fields.`)),
+S("Example: the whiteboard gets overwritten",
+ P(`(In these examples, <code>sleep(ms)</code> is a tiny helper that calls <code>Thread.sleep</code> and handles the exception.)`),
+ C(String.raw`static String sharedName;                                   // field: on the heap, shared
+
+public static void main(String[] args) throws Exception {
+    Runnable r = () -> {
+        String myName = Thread.currentThread().getName();   // local: on this thread's stack
+        sharedName = myName;
+        sleep(100);                                         // give the other thread time
+        System.out.println(myName + ": local myName = " + myName
+                + ", shared sharedName = " + sharedName);
+    };
+    Thread alice = new Thread(r, "alice");
+    Thread bob   = new Thread(r, "bob");
+    alice.start(); sleep(20); bob.start();
+    alice.join(); bob.join();
+}`),
+ O(`alice: local myName = alice, shared sharedName = bob
+bob: local myName = bob, shared sharedName = bob`),
+ P(`Alice wrote "alice" on the whiteboard (<code>sharedName</code>). While she slept, Bob wrote "bob" over it.`),
+ P(`Her notebook (<code>myName</code>) still says "alice". Nobody can touch it.`),
+ R(`Locals are yours. Fields are everybody's.`)),
+]},
+
+{part:"01",t:"The hardware: caches",steps:[
+S("Registers and caches",
+ C(`  core 0         core 1         core 2 ...
+ ┌────┐         ┌────┐         ┌────┐
+ │ L1 │         │ L1 │         │ L1 │   per core, ~1 ns
+ ├────┤         ├────┤         ├────┤
+ │ L2 │         │ L2 │         │ L2 │   per core
+ └──┬─┘         └──┬─┘         └──┬─┘
+    └──────────┬───┴──────────────┘
+               │     L3      │           shared between cores
+               └──────┬──────┘
+                     RAM                  ~100 ns`,'text'),
+ P(`Each core keeps <b>copies</b> of the data it works on in L1/L2. L3 is shared between cores.`),
+ Y(`"L3 is where interaction between cores happens — but you can't say 'allocate this ArrayList in L3'; we have no direct access."`),
+ R(`Each core works on its own copy of the data.`)),
+S("Why this causes trouble",
+ P(`Two threads on two cores can each see <b>their own version</b> of the same field.`),
+ P(`The hardware protocol that keeps copies consistent is <b>cache coherence</b> (MESI and its variants). Its costs are what people mean by terms like <i>false sharing</i>. (Topic of lecture 2.)`),
+ P(`Is L3 slow? "No, it's fast." Caches are <b>why</b> shared-memory threads are fast — and why seeing other threads' writes is <b>not automatic</b>.`),
+ R(`Caches = speed + the visibility problem.`)),
+S("Picture it: photocopies of the whiteboard",
+ AN(`Walking to the whiteboard (RAM) is slow. So each core keeps a <b>photocopy</b> of parts of it on its desk (its caches).`),
+ P(`Alice updates the whiteboard. Bob may keep reading his old photocopy.`),
+ P(`The hardware has rules to refresh photocopies (cache coherence). But the compiler can also keep a value "in its head" (a CPU register) and never look again. Java only guarantees a fresh look when you use its tools, such as <code>volatile</code>.`),
+ R(`Without the right tools, a thread can keep reading an old copy.`)),
+S("★ Deeper: cache lines and MESI",
+ P(`Caches don't copy single variables. They copy blocks called <b>cache lines</b>, usually <b>64 bytes</b> (Apple M-series chips use 128).`),
+ P(`To keep copies in different cores consistent, each cache line in each core has a state. <b>MESI</b> is named after the four states:`),
+ TB(`<tr><th>State</th><th>Meaning</th></tr>
+ <tr><td><b>M</b>odified</td><td>only this core has the line, and it changed it; RAM is out of date</td></tr>
+ <tr><td><b>E</b>xclusive</td><td>only this core has it; same as RAM</td></tr>
+ <tr><td><b>S</b>hared</td><td>several cores have clean copies</td></tr>
+ <tr><td><b>I</b>nvalid</td><td>this copy is out of date and must be fetched again</td></tr>`),
+ P(`When a core writes to a line that others hold as Shared, their copies become <b>Invalid</b>. That invalidation traffic costs time.`),
+ P(`Real CPUs use extended versions (Intel: MESIF, AMD: MOESI). Details in lecture 2.`),
+ R(`Caches work in 64-byte lines. A write invalidates other cores' copies.`)),
+S("★ Deeper: false sharing",
+ AN(`Two people edit <b>different</b> sentences on the <b>same page</b>. Each time one writes, the other's photocopy of the whole page is thrown away and copied again.`),
+ P(`Same in the CPU: two threads write two <b>different</b> variables that happen to sit in the same 64-byte line. They share no data, yet the line keeps bouncing between their cores. Everything slows down.`),
+ P(`Fix: keep hot, independently written fields at least one cache line apart (padding; the JDK uses an internal <code>@Contended</code> annotation for this).`),
+ P(`(It can't be measured on the 1-core machine used for this page, so there's no output here. It's lecture-2 material.)`),
+ R(`Different variables, same cache line = hidden slowdown.`)),
+]},
+
+{part:"01",t:"Three families of bugs",steps:[
+S("Bug family 1: atomicity (race conditions)",
+ P(`<code>count++</code> looks like one step. It's really three:`),
+ C(String.raw`int tmp = count;   // 1. read
+tmp = tmp + 1;     // 2. modify
+count = tmp;       // 3. write`),
+ P(`Two threads can mix these steps. Then one update is <b>lost</b>.`),
+ R(`count++ is read–modify–write, not one step.`)),
+S("See the race step by step",
+ P(`Two threads each run <code>count++</code> once. You choose who moves. Start with <b>Play the bad order</b>.`),
+ W('race'),
+ R(`Both read 0, both write 1. One increment vanished.`)),
+S("The race on a real JVM",
+ C(String.raw`static int count = 0;
+Runnable inc = () -> { for (int i = 0; i < 1_000_000; i++) count++; };
+Thread t1 = new Thread(inc), t2 = new Thread(inc);
+t1.start(); t2.start(); t1.join(); t2.join();
+System.out.println(count);`),
+ O(`run 1: 1780288      <- 219,712 updates lost
+run 2: 2000000      <- same code, lucky this time`),
+ P(`With <code>AtomicInteger.incrementAndGet()</code> instead: always 2000000.`),
+ P(`Note: this ran on a machine with <b>1 core</b>. Races happen even on one core, because the OS can pause a thread between "read" and "write".`),
+ R(`Races are random. "It worked once" proves nothing.`)),
+S("★ Deeper: what count++ really compiles to",
+ P(`Compile this and look at the bytecode with <code>javap -c</code>:`),
+ C(String.raw`static int count;
+static void inc() { count++; }`),
+ O(`static void inc();
+  Code:
+     0: getstatic     #7                  // Field count:I   <- 1. read count
+     3: iconst_1                                            <- 2. push the number 1
+     4: iadd                                                <- 3. add
+     5: putstatic     #7                  // Field count:I   <- 4. write count
+     8: return`),
+ P(`(Real <code>javap</code> output from JDK 21; the arrows are my notes.)`),
+ P(`Four separate instructions. The OS or another core can step in between <code>getstatic</code> and <code>putstatic</code>. That's the gap where updates get lost.`),
+ R(`One line of Java ≠ one step for the CPU.`)),
+S("★ Deeper: CAS — how AtomicInteger stays correct",
+ P(`<b>CAS</b> = compare-and-set: "set the value to <i>next</i>, but <b>only if</b> it is still <i>old</i>". The hardware does this as one atomic step (a special CPU instruction).`),
+ C(String.raw`AtomicInteger v = new AtomicInteger(0);
+System.out.println("compareAndSet(0, 1) -> " + v.compareAndSet(0, 1) + ", value = " + v.get());
+System.out.println("compareAndSet(0, 5) -> " + v.compareAndSet(0, 5) + ", value = " + v.get());`),
+ O(`compareAndSet(0, 1) -> true, value = 1
+compareAndSet(0, 5) -> false, value = 1`),
+ P(`The second call fails: the value isn't 0 any more, so nothing is written.`),
+ P(`Now a correct counter built from it. This is essentially what <code>incrementAndGet()</code> does:`),
+ C(String.raw`AtomicInteger count = new AtomicInteger();
+
+Runnable inc = () -> {
+    for (int i = 0; i < 1_000_000; i++) {
+        int old, next;
+        do {
+            old  = count.get();                      // 1. read
+            next = old + 1;                          // 2. compute
+        } while (!count.compareAndSet(old, next));   // 3. write ONLY if still 'old', else retry
+    }
+};
+Thread t1 = new Thread(inc), t2 = new Thread(inc);
+t1.start(); t2.start(); t1.join(); t2.join();
+System.out.println("count = " + count.get());`),
+ O(`count = 2000000`),
+ P(`If another thread changed the value between the read and the write, <code>compareAndSet</code> fails and the loop simply tries again. No lock, no lost updates.`),
+ R(`CAS = "write only if nobody changed it, else retry". Lecture 3 goes deep.`)),
+S("Check-then-act: the same bug in disguise",
+ C(String.raw`if (!map.containsKey(k)) {   // check
+    map.put(k, v);           // act — another thread may have put k in between
+}`),
+ P(`Fix: one atomic operation, e.g. <code>ConcurrentHashMap.putIfAbsent(k, v)</code>.`),
+ R(`"Check, then act" is two steps — another thread fits in between.`)),
+S("Example: the bank account that goes negative",
+ C(String.raw`static class Account {
+    int balance = 100;
+
+    boolean withdraw(int amount) {
+        if (balance >= amount) {       // 1. check
+            sleep(10);                 //    some work in between (DB call, log line...)
+            balance -= amount;         // 2. act
+            return true;
+        }
+        return false;
+    }
+}
+
+public static void main(String[] args) throws Exception {
+    for (int run = 1; run <= 3; run++) {
+        Account acc = new Account();
+        boolean[] ok = new boolean[2];
+        Thread x = new Thread(() -> ok[0] = acc.withdraw(100));
+        Thread y = new Thread(() -> ok[1] = acc.withdraw(100));
+        x.start(); y.start(); x.join(); y.join();
+        System.out.println("run " + run + ": withdraw #1=" + ok[0] + ", withdraw #2=" + ok[1]
+                + ", balance=" + acc.balance);
+    }
+}`),
+ O(`run 1: withdraw #1=true, withdraw #2=true, balance=-100
+run 2: withdraw #1=true, withdraw #2=true, balance=-100
+run 3: withdraw #1=true, withdraw #2=true, balance=-100`),
+ P(`Both threads checked "balance ≥ 100?" <b>before</b> either one subtracted. Both got "yes". The bank paid out 200 from an account holding 100.`),
+ P(`The <code>sleep(10)</code> stands for real work between check and act. It widens the gap so the bug shows every time. Without it the bug still exists — it's just rarer, and much harder to find.`),
+ R(`Check and act must happen as one step.`)),
+S("Preview: the fix",
+ P(`Add one word, <code>synchronized</code>, so only one thread at a time can be inside <code>withdraw</code>:`),
+ C(`synchronized boolean withdraw(int amount) { ... same body ... }`),
+ O(`run 1: withdraw #1=true, withdraw #2=false, balance=0
+run 2: withdraw #1=true, withdraw #2=false, balance=0
+run 3: withdraw #1=false, withdraw #2=true, balance=0`),
+ P(`One withdrawal succeeds, the other is refused. Correct every time. (Which thread wins still varies.) How <code>synchronized</code> works is your next lecture.`),
+ R(`One thread at a time inside = no race.`)),
+S("Bug family 2: visibility",
+ P(`Thread A writes a field. Thread B may keep reading an old copy (from its cache or a register) — <b>forever</b>.`),
+ P(`Nothing forces the write to become visible, unless the code creates a <b>happens-before</b> relationship.`),
+ P(`Things that create it: <code>volatile</code>, <code>synchronized</code>, locks, <code>Thread.start()</code>, <code>Thread.join()</code>, concurrent collections, and more.`),
+ R(`Without happens-before, another thread may never see your write.`)),
+S("Example: the thread that never stops",
+ C(String.raw`static boolean running = true;              // no volatile
+
+public static void main(String[] args) throws Exception {
+    Thread worker = new Thread(() -> {
+        while (running) { }                 // busy loop, keeps checking the flag
+        System.out.println("worker: saw running=false, stopping");
+    });
+    worker.setDaemon(true);                 // only so this demo can exit
+    worker.start();
+    Thread.sleep(1000);
+    running = false;
+    System.out.println("main: set running = false");
+    worker.join(3000);
+    System.out.println("main: worker still alive 3 s later? " + worker.isAlive());
+}`),
+ O(`main: set running = false
+main: worker still alive 3 s later? true`),
+ P(`The worker <b>never</b> saw the change. Most likely the JIT compiler saw a loop that never writes <code>running</code>, read it once, and kept it in a register. That's allowed: nothing told Java that another thread changes this field.`),
+ R(`A plain field changed by another thread may never be seen.`)),
+S("Example: one word fixes it",
+ C(`static volatile boolean running = true;     // the only change`),
+ O(`main: set running = false
+worker: saw running=false, stopping
+main: worker still alive 3 s later? false`),
+ P(`<code>volatile</code> means: "other threads change this — always read the real value". Full details in your next lecture.`),
+ R(`A flag shared between threads needs volatile (or another happens-before tool).`)),
+S("★ Deeper: happens-before in plain words",
+ P(`<b>"A happens-before B"</b> = a promise from Java: when B runs, it sees everything A wrote (and everything before A).`),
+ P(`It's <b>not</b> about time. Something can run earlier and still be invisible to another thread. It's a visibility guarantee.`),
+ P(`The main rules:`),
+ TB(`<tr><th>Rule</th><th>What it promises</th></tr>
+ <tr><td>Program order</td><td>inside one thread, each line happens-before the next</td></tr>
+ <tr><td>Thread start</td><td>everything before <code>t.start()</code> happens-before anything <code>t</code> does</td></tr>
+ <tr><td>Thread end</td><td>everything <code>t</code> does happens-before <code>t.join()</code> returns</td></tr>
+ <tr><td><code>volatile</code></td><td>a write to a volatile field happens-before every later read of it</td></tr>
+ <tr><td>Monitor</td><td>leaving a <code>synchronized</code> block happens-before the next thread entering one on the same object</td></tr>
+ <tr><td>Concurrent tools</td><td>put into a concurrent collection → take out; <code>submit()</code> → the task runs; the task → <code>Future.get()</code> returns</td></tr>
+ <tr><td>Interrupt</td><td><code>t.interrupt()</code> happens-before <code>t</code> noticing it</td></tr>`),
+ P(`Rules chain: if A → B and B → C, then A → C.`),
+ P(`No rule connects two actions? Then there's no promise at all. That's the visibility bug from the previous screens.`),
+ R(`happens-before = a visibility guarantee, created only by specific actions.`)),
+S("★ Example: the start() rule",
+ C(String.raw`static int data;                                      // plain field, no volatile
+
+public static void main(String[] args) throws Exception {
+    data = 42;                                        // written BEFORE start()
+    Thread t = new Thread(() -> System.out.println("thread sees data = " + data));
+    t.start();                                        // start() rule: t sees everything before this line
+    t.join();
+}`),
+ O(`thread sees data = 42`),
+ P(`<code>data</code> is a plain field, not volatile. Still guaranteed: it was written before <code>start()</code>.`),
+ P(`But if main changed <code>data</code> <b>after</b> <code>start()</code>, the thread might never see the new value: no rule would cover it.`),
+ R(`Set things up before start(). Read results after join().`)),
+S("Bug family 3: ordering",
+ P(`The compiler and CPU may <b>reorder</b> independent operations to run faster.`),
+ P(`Inside one thread you never notice. But another thread can see your writes in a <b>different order</b> than your source code shows.`),
+ R(`Other threads may see your writes out of order.`)),
+S("Picture it: two letters",
+ AN(`You post two letters: first "I've put money in the box", then "go and open the box". The post delivers the second one first.`),
+ P(`Your friend opens the box early: empty. In your house the order was obvious. From outside, it wasn't.`),
+ P(`Same with threads: another thread may see <code>ready = true</code> before it sees the data you wrote just before it. It's hard to reproduce on a normal PC, but Java allows it — so real bugs appear on some CPUs or after JIT optimisations.`),
+ R(`Other threads may see your steps out of order — unless you use happens-before tools.`)),
+S("The lecturer's tiny visibility example",
+ P(`He printed <code>otherThread.getState()</code> from another thread.`),
+ Y(`"There is no happens-before between us and that thread's state. When I print NEW, in reality it may already be RUNNABLE, BLOCKED, WAITING or TERMINATED. The only value I can trust is TERMINATED, because a thread can't leave TERMINATED."`),
+ R(`Another thread's state may already be old when you read it.`))
+]},
+
+{part:"01",t:"Thread safety and collections",steps:[
+S("Thread safety in one sentence",
+ Y(`"If code written for one thread at a time is run by several threads at once, its behaviour is guaranteed to be unpredictable. It may work well, badly, or 'on average' — but you can never know it will do what you need."`),
+ R(`Not thread-safe + many threads = unpredictable. Always.`)),
+S("Why ordinary collections break",
+ P(`<code>ArrayList</code>, <code>LinkedList</code>, <code>HashMap</code>, <code>ArrayDeque</code> assume: one thread comes, adds, leaves; then the next.`),
+ P(`<code>LinkedList</code> = nodes linked by <code>next</code> pointers, plus <code>first</code>, <code>last</code> and <code>size</code> fields.`),
+ P(`10 threads add at once → all read the same "last node" → each links its node after it → the pointers get overwritten → most nodes are simply <b>lost</b>.`),
+ R(`Shared plain collections silently lose data.`)),
+S("It happened live in the lecture",
+ P(`The lecturer's hand-made thread pool used a <code>LinkedList</code> as its task queue. 4 workers polled it while <code>main</code> added tasks.`),
+ P(`<b>Only 1 task out of 10 ran.</b> He switched to a concurrent collection — "copy-on-write", in his words — and it worked.`),
+ P(`(Careful: <code>CopyOnWriteArrayList</code> copies its whole array on every add. Fine for a demo, a poor task queue. File 03 shows the right kinds of queue.)`),
+ P(`Re-run here (4 producers, 4 consumers, 200,000 tasks):`),
+ O(`LinkedList:            submitted=200000 executed=91062  lost=108938 exceptions=0
+LinkedList:            submitted=200000 executed=182211 lost=17789  exceptions=0   <- varies every run
+ConcurrentLinkedQueue: submitted=200000 executed=200000 lost=0      exceptions=0`),
+ P(`<b>Not a single exception.</b> Tasks just vanished.`),
+ R(`The worst bugs are silent.`)),
+S("Example: a shared ArrayList",
+ C(String.raw`List<Integer> list = new ArrayList<>();
+Map<Integer, Integer> map = new HashMap<>();
+List<Thread> threads = new ArrayList<>();
+for (int t = 0; t < 4; t++) {
+    int base = t * 1_000_000;
+    threads.add(new Thread(() -> {
+        for (int i = 0; i < 1_000_000; i++) {
+            list.add(i);
+            map.put(base + i, i);            // different keys in every thread
+        }
+    }));
+}
+for (Thread t : threads) t.start();
+for (Thread t : threads) t.join();
+System.out.println("list.size()=" + list.size() + "  map.size()=" + map.size()
+        + "  (expected 4000000)");`),
+ O(`program run 1:
+list.size()=3785532  map.size()=4000000  (expected 4000000)
+
+program run 2:
+Exception in thread "Thread-3" java.lang.ArrayIndexOutOfBoundsException: Index 1426458 out of bounds for length 1215487
+list.size()=2930466  map.size()=3443607  (expected 4000000)`),
+ P(`Run 1: the list lost over 200,000 elements, silently. <code>HashMap</code> survived <b>this</b> run.`),
+ P(`Run 2: two threads grew the list's array at the same time, and one crashed. A crashed thread stops, so its remaining <code>map.put</code> calls never happened either.`),
+ P(`HashMap passing run 1 isn't good news. It's exactly the trap on the next screen: a passing run proves nothing.`),
+ R(`Shared ArrayList = lost data or crashes. A passing run proves nothing.`)),
+S("The Spring bean story",
+ Y(`"You'll walk into a real Spring team and see a @Bean that returns new HashMap<>(), used by several services at once. Tests exist and tests pass."`),
+ Q(`Why do the tests pass?`,
+   `<p><code>HashMap</code> breaks when two threads touch the same bucket at the same time, or when a resize runs during a write.</p><p>Tests put 3 values in, one after another, into a default-size map: no collision, no resize, no failure.</p><p>In production under load: silent corruption, or (in old JDKs) a thread spinning forever in a broken chain.</p>`),
+ P(`Fix: <code>ConcurrentHashMap</code>.`),
+ R(`Passing tests don't prove thread safety.`)),
+S("Can you test for this?",
+ P(`Yes — with <b>jcstress</b> (OpenJDK's concurrency stress-testing tool; later in the course).`),
+ P(`It gives a much higher guarantee, but not an absolute one.`),
+ R(`Use jcstress for concurrency tests.`)),
+S("The tools coming in later lessons",
+ TB(`<tr><th>Problem</th><th>Tool</th></tr>
+ <tr><td>visibility of one field</td><td><code>volatile</code></td></tr>
+ <tr><td>atomic read-modify-write</td><td><code>AtomicInteger</code>, <code>AtomicBoolean</code>, CAS (the lecturer used <code>AtomicBoolean</code> for his pool's shutdown flag: "a thread-safe boolean, an improved boolean — ignore the details for now")</td></tr>
+ <tr><td>mutual exclusion</td><td><code>synchronized</code>, monitors, wait-set</td></tr>
+ <tr><td>finer control</td><td><code>ReentrantLock</code>, <code>ReadWriteLock</code> (the "split reads from writes" task), <code>StampedLock</code>, <code>LockSupport</code></td></tr>
+ <tr><td>scaling</td><td>sharding / lock striping (the hedge-fund follow-up)</td></tr>
+ <tr><td>avoiding locks</td><td>non-blocking algorithms, concurrent collections</td></tr>`),
+ R(`Each problem has its own tool. You'll learn them one by one.`)),
+S("★ Deeper: \"split reads and writes\" and \"shard it\"",
+ P(`The interview task from chapter 1, explained so it isn't scary.`),
+ AN(`A shop with <b>one cashier</b> = one lock around the whole collection: everyone queues, one at a time.`),
+ P(`<b>Split reads and writes:</b> many people may <i>look</i> at the price list together; only someone <i>changing</i> it must be alone. In Java: <code>ReentrantReadWriteLock</code>: many readers at once, or one writer.`),
+ P(`<b>Shard it (lock striping):</b> open 16 checkouts, and customers pick one by the first letter of their surname. Each part of the data has its own lock, so threads working on different parts never wait for each other.`),
+ R(`One lock = one queue. Many locks = many queues in parallel.`)),
+S("★ Example: a striped map",
+ P(`16 small HashMaps, each with its own lock. A key's hash picks its part. (<code>synchronized</code> is next lecture; here it just means "one thread at a time for this part".)`),
+ C(String.raw`static class StripedMap<K, V> {
+    private static final int STRIPES = 16;
+    private final Object[] locks = new Object[STRIPES];
+    private final List<Map<K, V>> parts = new ArrayList<>();
+
+    StripedMap() {
+        for (int i = 0; i < STRIPES; i++) { locks[i] = new Object(); parts.add(new HashMap<>()); }
+    }
+    private int stripe(K key) { return Math.floorMod(key.hashCode(), STRIPES); }
+
+    void put(K key, V value) {
+        int i = stripe(key);
+        synchronized (locks[i]) { parts.get(i).put(key, value); }   // locks 1 part of 16
+    }
+    V get(K key) {
+        int i = stripe(key);
+        synchronized (locks[i]) { return parts.get(i).get(key); }
+    }
+    int size() {
+        int n = 0;
+        for (int i = 0; i < STRIPES; i++) synchronized (locks[i]) { n += parts.get(i).size(); }
+        return n;
+    }
+}
+
+public static void main(String[] args) throws Exception {
+    StripedMap<Integer, Integer> map = new StripedMap<>();
+    List<Thread> threads = new ArrayList<>();
+    for (int t = 0; t < 4; t++) {
+        int base = t * 100_000;
+        threads.add(new Thread(() -> { for (int i = 0; i < 100_000; i++) map.put(base + i, i); }));
+    }
+    for (Thread t : threads) t.start();
+    for (Thread t : threads) t.join();
+    System.out.println("size = " + map.size() + " (expected 400000), get(250000) = " + map.get(250000));
+}`),
+ O(`size = 400000 (expected 400000), get(250000) = 50000`),
+ P(`Correct result, and up to 16 threads can write at the same time, as long as their keys land in different parts.`),
+ P(`<code>ConcurrentHashMap</code> uses a smarter version of the same idea: it locks only one small bucket at a time and uses CAS where it can.`),
+ R(`Sharding = split the data, give each piece its own lock.`)),
+]},
+
+{part:"01",t:"Pros, cons, interview (file 01)",steps:[
+S("Pros of going multithreaded",
+ P(`<ul><li>Uses all cores → more throughput for CPU work.</li><li>Hides IO waiting → one process serves many slow clients.</li><li>Shared memory → data exchange at RAM speed.</li><li>Responsiveness: a UI keeps reacting while work runs elsewhere.</li></ul>`),
+ R(`Speed, waiting hidden, fast sharing, responsiveness.`)),
+S("Cons and costs",
+ P(`<ul><li>Threads are heavy (~1 MB, OS calls): thousands, not tens of thousands.</li>
+ <li>Amdahl: the serial part caps you. More threads can even be <b>slower</b> (context switches, cache thrashing).</li>
+ <li>Shared memory is unsafe by default: silent, random bugs that survive unit tests.</li>
+ <li>You depend on the OS scheduler: you can hint, not command.</li>
+ <li>Harder to debug and reason about; new vocabulary to learn.</li></ul>`),
+ R(`Every benefit comes with a cost you must manage.`)),
+S("Interview questions (file 01)",
+ Q(`Why threads and not processes?`,`<p>Threads share the heap → they exchange objects at RAM speed. Processes give isolation (a crash or a security problem stays in one process, like Chrome tabs). Threads for fast cooperation, processes for isolation.</p>`),
+ Q(`Can I make my program N× faster with N threads?`,`<p>No. Amdahl's law: the serial part limits the speed-up; ceiling = 1 / (1 − p). Find the serial part first.</p>`),
+ Q(`What does a thread cost?`,`<p>An OS call + ~1 MB reserved stack. Thousands OK, tens of thousands not. Hence pools and virtual threads.</p>`),
+ Q(`Why is a HashMap in a shared bean dangerous if tests pass?`,`<p>It breaks only on concurrent collisions or resizes, which simple tests don't produce. Silent corruption. Use ConcurrentHashMap; test with jcstress.</p>`),
+ Q(`Is reading another thread's state reliable?`,`<p>No. It's a snapshot: the other thread can change state right after you read it. Only TERMINATED can be trusted, because it never changes.</p>`),
+ R(`Answer out loud first, then open.`)),
+S("The low-latency flavour",
+ P(`In a hedge-fund system the bottleneck is usually the <b>network</b>, not the disk: everything is kept in RAM, so you hit the network and need fast network cards.`),
+ P(`Senior interviews there may ask about MESI, cache lines, and network-card tuning.`),
+ P(`He told the story of one such interview: after answering everything else, he was rejected over trivia about TCP/IP tuning on the network card.`),
+ P(`His advice: the course covers 99 %. The last 1 % a sane team explains in 30 minutes.`),
+ R(`Low latency = RAM + network. Disks aren't on the hot path.`))
+]},
+
+/* ===================== FILE 02 ===================== */
+{part:"02",t:"What is a thread",steps:[
+S("The official definition doesn't help",
+ P(`The Java docs basically say: "a thread is a thread of execution".`),
+ Y(`"That's nonsense — a thread is a thread?"`),
+ P(`A better phrase: <b>independent activity</b>.`),
+ P(`Dig deeper and you get what it physically is: a set of instructions to execute — a <b>stack</b>. If several threads call the same method, each has its own copy of the stack frames. The OS scheduler places them on cores.`),
+ R(`A thread = an independent activity with its own stack.`)),
+S("The interview answer",
+ Y(`"A thread is an independent activity that has its own execution stack, and it has access to memory shared with the other threads inside the same process."`),
+ P(`Three parts, all matter:`),
+ P(`<ol><li><b>Independent</b> — scheduled separately by the OS.</li><li><b>Own stack</b> — private locals.</li><li><b>Shared memory</b> — the process's heap.</li></ol>`),
+ R(`Independent + own stack + shared memory.`))
+]},
+
+{part:"02",t:"Creating a thread",steps:[
+S("The basic form",
+ C(String.raw`Thread t = new Thread(new Runnable() {
+    @Override public void run() {
+        System.out.println("hello from " + Thread.currentThread().getName());
+    }
+});
+t.start();`),
+ R(`Runnable = the work. Thread = the one who runs it.`)),
+S("With a lambda and a name",
+ C(String.raw`Thread t = new Thread(
+        () -> System.out.println("hello from " + Thread.currentThread().getName()),
+        "my-thread");
+t.start();`),
+ P(`Always <b>name</b> your threads. Names show up in thread dumps and logs.`),
+ R(`Name every thread.`)),
+S("new is not start",
+ P(`<code>new Thread(...)</code>: just a Java object. State = <code>NEW</code>.`),
+ P(`<code>start()</code>: the expensive talk with the OS happens <b>here</b>. In HotSpot the native thread is created inside <code>start()</code>. State → <code>RUNNABLE</code>.`),
+ P(`A <code>Thread</code> object that is never started is a plain object. The garbage collector removes it like any other. (A student asked: "will all those threads I created in a loop get deleted?" — if you never <code>start()</code> them, yes.)`),
+ R(`new = object. start() = real OS thread.`)),
+S("The Runnable is the thread's whole job",
+ Y(`"A thread is heavy; its Runnable — the stack it will execute — is a few bytes. That line is the entire stack of this thread. When it finishes, the thread is done."`),
+ P(`The <code>Runnable</code> is how you hand the thread its work for when the scheduler says "go".`),
+ P(`Thread pools = "same heavy thread, different light Runnables".`),
+ R(`run() ends → the thread ends.`)),
+S("Way 1: subclass Thread (avoid)",
+ C(String.raw`class MyThread extends Thread {
+    @Override public void run() { /* ... */ }
+}
+new MyThread().start();`),
+ P(`Why avoid: it ties the task to the thread, gives no result, and is awkward to hand to a pool later.`),
+ R(`Prefer Runnable over extends Thread.`)),
+S("Way 2: Runnable + Thread (the lecture's way)",
+ C(String.raw`new Thread(() -> work(), "worker-1").start();`),
+ R(`This is the normal way when you really need a raw thread.`)),
+S("Way 3: Thread.Builder (JDK 21)",
+ C(String.raw`Thread t = Thread.ofPlatform()
+        .name("worker-", 0)          // worker-0, worker-1, ...
+        .daemon(false)
+        .unstarted(() -> work());
+t.start();
+
+Thread v = Thread.ofVirtual().name("vt-", 0).start(() -> work());   // chapter 20`),
+ P(`Builders set name, daemon flag and exception handler in one place. <code>unstarted</code> creates it; <code>start</code> creates and starts.`),
+ R(`Builders: platform or virtual, configured neatly.`)),
+S("Way 4: Callable + Future through an executor",
+ C(String.raw`ExecutorService ex = Executors.newFixedThreadPool(4);
+Future<Integer> f = ex.submit(() -> compute());   // a Callable<Integer>
+int result = f.get();    // waits until done; task exceptions come as ExecutionException`),
+ P(`Use it when you need a <b>result</b> or want to throw a checked exception.`),
+ R(`Need a result? Callable + Future.`)),
+S("The rule for real code",
+ P(`In application code you almost never write <code>new Thread(...).start()</code>.`),
+ P(`You submit a <code>Runnable</code> or <code>Callable</code> to a pool (files 03, 04).`),
+ R(`Raw threads for learning. Pools for real code.`))
+]},
+
+{part:"02",t:"start() vs run()",steps:[
+S("Calling start() twice",
+ C(String.raw`Thread t = new Thread(() -> System.out.println("kek"));
+t.start();
+t.start();   // java.lang.IllegalThreadStateException`),
+ P(`A thread's <code>Runnable</code> runs <b>exactly once</b>. After that it's <code>TERMINATED</code>. No way back.`),
+ R(`A thread can't be restarted.`)),
+S("run() runs in the CURRENT thread",
+ C(String.raw`Thread t = new Thread(
+        () -> System.out.println("running in " + Thread.currentThread().getName()),
+        "my-thread");
+t.run();     // runs on main
+t.start();   // runs on my-thread`),
+ O(`running in main
+running in my-thread`),
+ P(`<code>t.run()</code> = an ordinary method call. <code>main</code> executes the Runnable on its own stack. No new thread.`),
+ P(`<code>t.start()</code> = a new native thread; the Runnable runs there.`),
+ R(`run() = normal call. start() = new thread.`)),
+S("A classic beginner bug",
+ P(`Calling <code>run()</code> instead of <code>start()</code>.`),
+ P(`The code "works", prints the right things — but everything runs on one thread. No parallelism at all.`),
+ R(`If it's accidentally single-threaded, check for run().`)),
+S("Example: run() is secretly one after another",
+ P(`Two jobs, each waiting 1 second:`),
+ C(String.raw`Runnable job = () -> sleep(1000);
+
+long t0 = System.currentTimeMillis();
+new Thread(job).run();
+new Thread(job).run();
+System.out.println("run() twice:   " + (System.currentTimeMillis() - t0) + " ms");
+
+t0 = System.currentTimeMillis();
+Thread a = new Thread(job), b = new Thread(job);
+a.start(); b.start();
+a.join();  b.join();
+System.out.println("start() twice: " + (System.currentTimeMillis() - t0) + " ms");`),
+ O(`run() twice:   2001 ms
+start() twice: 1001 ms`),
+ R(`run() twice = one after another. start() twice = at the same time.`)),
+S("The reuse trick = the seed of every pool",
+ Y(`"We can't reuse a thread. But what do we need? A thread that keeps executing other Runnables. So inside the one Runnable it started with, we loop and pull other Runnables from somewhere."`),
+ C(String.raw`Queue<Runnable> tasks = ...;               // must be thread-safe!
+Thread worker = new Thread(() -> {
+    while (true) {
+        Runnable task = tasks.poll();
+        if (task != null) task.run();      // run(), not start(): on THIS thread
+    }
+});
+worker.start();`),
+ P(`(This is a sketch. It has several problems you'll fix yourself in file 03.)`),
+ R(`One thread, forever, running many Runnables = a pool.`))
+]},
+
+{part:"02",t:"The six thread states",steps:[
+S("The six states",
+ P(`<code>Thread.getState()</code> returns one of six values of <code>Thread.State</code>:`),
+ P(`<code>NEW</code>, <code>RUNNABLE</code>, <code>BLOCKED</code>, <code>WAITING</code>, <code>TIMED_WAITING</code>, <code>TERMINATED</code>.`),
+ P(`Real run, one example of each:`),
+ O(`after new():                NEW
+busy loop:                  RUNNABLE
+Thread.sleep():             TIMED_WAITING
+LockSupport.park():         WAITING
+synchronized (lock busy):   BLOCKED
+after join():               TERMINATED`),
+ R(`Six states. Learn them by name.`)),
+S("Picture it: an employee's day",
+ AN(`<ul><li><b>NEW</b>: hired, hasn't started yet.</li><li><b>RUNNABLE</b>: working, or ready and waiting for a free desk (a core).</li><li><b>BLOCKED</b>: standing outside a locked meeting room until the person inside comes out.</li><li><b>WAITING</b>: waiting for a phone call, however long it takes.</li><li><b>TIMED_WAITING</b>: a nap with an alarm clock set.</li><li><b>TERMINATED</b>: left the company. Can't be re-hired.</li></ul>`),
+ R(`BLOCKED = waiting for a lock. WAITING = waiting for a signal.`)),
+S("NEW",
+ P(`The <code>Thread</code> object exists. <code>start()</code> hasn't been called yet.`),
+ P(`The lecturer's mental model: "we asked the OS for a thread; it said OK; you may start it". Precisely: in HotSpot the OS thread is created only inside <code>start()</code>.`),
+ R(`NEW = created, not started.`)),
+S("RUNNABLE",
+ Y(`"The only state that says the thread is working normally and everything is fine."`),
+ P(`It may be on a core, or waiting for one. Java doesn't tell which.`),
+ P(`Surprise (tested): a <b>platform</b> thread blocked in socket IO, e.g. <code>serverSocket.accept()</code>, also shows <code>RUNNABLE</code>. The JVM sees it as busy in native code. (A <b>virtual</b> thread doing the same shows <code>WAITING</code>, because it has unmounted.)`),
+ R(`RUNNABLE = running, ready to run, or stuck in native IO.`)),
+S("BLOCKED",
+ Y(`"It's about waiting, too — waiting for a lock."`),
+ P(`Waiting for a <b>lock</b>: trying to enter a <code>synchronized</code> block or method while another thread holds its monitor.`),
+ P(`Also: after <code>wait()</code> is woken, the thread must re-take the monitor. It's BLOCKED until it gets it.`),
+ R(`BLOCKED = waiting to enter synchronized.`)),
+S("WAITING",
+ P(`Frozen with <b>no time limit</b> until someone wakes it.`),
+ Y(`"Associate these with the word 'sleep' — frozen, doing nothing. Though honestly that's a bit misleading, because there is also BLOCKED."`),
+ P(`Caused by: <code>Object.wait()</code>, <code>Thread.join()</code>, <code>LockSupport.park()</code>.`),
+ R(`WAITING = until someone wakes me.`)),
+S("TIMED_WAITING",
+ P(`Same as WAITING, but with a <b>deadline</b>.`),
+ P(`Caused by: <code>Thread.sleep(ms)</code>, <code>Object.wait(ms)</code>, <code>Thread.join(ms)</code>, <code>LockSupport.parkNanos</code> / <code>parkUntil</code>.`),
+ R(`TIMED_WAITING = until woken or the time runs out.`)),
+S("TERMINATED",
+ Y(`"Done. Nothing more can be done with it."`),
+ P(`Reached when <code>run()</code> ends — normally <b>or</b> with an uncaught exception.`),
+ R(`TERMINATED is final.`)),
+S("How the waiting states relate",
+ Y(`"WAITING and TIMED_WAITING most often organise the order of waiting — a queue of threads waiting for access to data: I wait, or wait with a timeout, or I'm BLOCKED when I'm ready to take the data but haven't yet."`),
+ P(`Full story in the <code>synchronized</code> lesson.`),
+ R(`WAITING: waiting for a signal. BLOCKED: waiting for a lock.`)),
+S("★ Deeper: the monitor, the entry set and the wait set",
+ P(`Every Java object has a built-in lock called a <b>monitor</b>. <code>synchronized (obj)</code> takes it, and only one thread can hold it at a time.`),
+ C(`  threads that want the lock
+            │
+            ▼
+   ┌─────────────────┐   gets the lock   ┌─────────────┐
+   │   ENTRY SET     │ ────────────────► │   OWNER     │  (only one)
+   │   (BLOCKED)     │                   │ (RUNNABLE)  │
+   └─────────────────┘                   └──────┬──────┘
+            ▲                                   │ obj.wait():
+            │ obj.notify():                     │ gives the lock back
+            │ must win the lock again           ▼
+            │                            ┌─────────────┐
+            └─────────────────────────── │  WAIT SET   │
+                                         │  (WAITING)  │
+                                         └─────────────┘`,'text'),
+ P(`<ul><li>Waiting to <b>get</b> the monitor → the <b>entry set</b> → <code>BLOCKED</code>.</li><li>Called <code>obj.wait()</code> → gives the monitor <b>back</b> and sleeps in the <b>wait set</b> → <code>WAITING</code> (<code>TIMED_WAITING</code> with a timeout).</li><li><code>obj.notify()</code> → one thread leaves the wait set and must win the monitor again → <code>BLOCKED</code> → <code>RUNNABLE</code>.</li></ul>`),
+ R(`Entry set = BLOCKED. Wait set = WAITING.`)),
+S("★ Example: a thread moving through the sets",
+ C(String.raw`Object lock = new Object();
+
+Thread waiter = new Thread(() -> {
+    synchronized (lock) {                                 // take the monitor
+        try { lock.wait(); }                              // release it and wait in the WAIT SET
+        catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        System.out.println("waiter: woke up and has the lock again");
+    }
+}, "waiter");
+waiter.start();
+sleep(100);
+System.out.println("1. waiter called wait():            " + waiter.getState());
+
+synchronized (lock) {
+    lock.notify();                                        // move waiter out of the wait set...
+    sleep(100);
+    System.out.println("2. notified, main still holds lock: " + waiter.getState());
+}                                                         // ...main releases the monitor here
+waiter.join();
+System.out.println("3. after main released the lock:    " + waiter.getState());`),
+ O(`1. waiter called wait():            WAITING
+2. notified, main still holds lock: BLOCKED
+waiter: woke up and has the lock again
+3. after main released the lock:    TERMINATED`),
+ P(`Step 2 is the surprise: after <code>notify()</code> the waiter is <b>BLOCKED</b>, not RUNNABLE. Main still holds the monitor.`),
+ P(`Two rules for real code (next lecture): call <code>wait</code>/<code>notify</code> only inside <code>synchronized</code> on the same object, and always <code>wait()</code> in a loop that re-checks a condition, because threads can wake up spuriously.`),
+ R(`notify() doesn't hand over the lock. It only lets the waiter compete for it.`)),
+S("★ Deeper: deadlock — BLOCKED forever",
+ AN(`Two cars meet on a one-lane bridge. Each waits for the other to reverse. Neither does.`),
+ P(`Thread 1 holds lock A and wants B. Thread 2 holds B and wants A. Both wait forever.`),
+ C(String.raw`Object a = new Object(), b = new Object();
+
+Thread t1 = new Thread(() -> {
+    synchronized (a) { sleep(100); synchronized (b) { System.out.println("t1 got both"); } }
+}, "t1");
+Thread t2 = new Thread(() -> {
+    synchronized (b) { sleep(100); synchronized (a) { System.out.println("t2 got both"); } }
+}, "t2");
+t1.setDaemon(true); t2.setDaemon(true);                   // only so this demo can exit
+t1.start(); t2.start();
+sleep(1000);
+System.out.println("t1: " + t1.getState() + ", t2: " + t2.getState());
+long[] stuck = ManagementFactory.getThreadMXBean().findDeadlockedThreads();
+System.out.println("JVM found deadlocked threads: " + (stuck == null ? 0 : stuck.length));`),
+ O(`t1: BLOCKED, t2: BLOCKED
+JVM found deadlocked threads: 2`),
+ P(`No exception, no error message: the threads just stop. A thread dump (<code>jstack</code> prints "Found one Java-level deadlock") or <code>findDeadlockedThreads()</code> reveals it.`),
+ P(`The classic fix: every thread takes locks in the <b>same order</b> (always A, then B). More tools, like <code>tryLock</code> with a timeout, in the locks lecture.`),
+ R(`Deadlock = each holds what the other needs. Fix: one global lock order.`)),
+S("Explore the transitions",
+ P(`Press an action. See where the thread goes and why. Only actions possible in the current state are shown.`),
+ W('states'),
+ R(`Try: RUNNABLE → wait() → notify(). It goes to BLOCKED, not RUNNABLE.`)),
+S("The whole map (text version)",
+ C(`NEW ──start()──► RUNNABLE ──run() returns / throws──► TERMINATED (no way back)
+
+RUNNABLE ──synchronized, lock busy──► BLOCKED ──lock acquired──► RUNNABLE
+
+RUNNABLE ──wait() / join() / park()──► WAITING
+WAITING  ──join target ends / unpark() / interrupt() (was in join or park)──► RUNNABLE
+WAITING  ──notify() / interrupt() (was in wait())──► BLOCKED  (must re-take the monitor)
+
+RUNNABLE ──sleep(ms) / wait(ms) / join(ms) / parkNanos()──► TIMED_WAITING
+TIMED_WAITING ──timeout / unpark() / interrupt() (was in sleep, join or park)──► RUNNABLE
+TIMED_WAITING ──notify / timeout / interrupt (was in wait(ms))──► BLOCKED`,'text'),
+ R(`Anything woken from wait() passes through BLOCKED.`)),
+S("States that do NOT exist (interview traps)",
+ TB(`<tr><th>Proposed</th><th>Verdict</th></tr>
+ <tr><td><code>RUNNING</code></td><td>Not a Java state. It's OS vocabulary. Java merges it into RUNNABLE: "we don't care whether it's on a core right now".</td></tr>
+ <tr><td><code>INTERRUPTED</code></td><td>Not a state — a <b>flag</b>, like the thread's name. Setting it doesn't change the state.</td></tr>
+ <tr><td><code>DONE</code> / <code>FINISHED</code></td><td>Only TERMINATED exists.</td></tr>
+ <tr><td>"couldn't get memory"</td><td>No state — <code>start()</code> throws <code>OutOfMemoryError: unable to create native thread</code>.</td></tr>`),
+ R(`No RUNNING. No INTERRUPTED. Six states only.`)),
+S("Reading another thread's state isn't reliable",
+ P(`<code>other.getState()</code> gives you a snapshot. The other thread keeps running, so the value can be old the moment you use it. Nothing ties that thread's next step to your read.`),
+ P(`Only <code>TERMINATED</code> is trustworthy (a thread can't leave it).`),
+ P(`The demos on this page use short <code>sleep</code>s between checks. That's a demo trick, not a real guarantee.`),
+ R(`Use getState() for debugging, not for logic.`))
+]},
+
+{part:"02",t:"main, children, and JVM exit",steps:[
+S("The demo",
+ C(String.raw`public static void main(String[] args) {
+    new Thread(() -> { sleep(1000); System.out.println("child completed"); }).start();
+    new Thread(() -> { sleep(2000); System.out.println("child2 completed"); }).start();
+    System.out.println("main completed");
+}`),
+ O(`main completed after 4 ms
+child completed after 1004 ms
+child2 completed after 2007 ms`),
+ P(`The scheduler started both children almost instantly because the machine was idle. Don't read anything into the exact milliseconds.`),
+ R(`main finished first. The program didn't.`)),
+S("When does the JVM exit?",
+ P(`When the <b>last non-daemon thread</b> finishes. Not when <code>main</code> finishes.`),
+ Y(`"It waits for the last real heir."`),
+ P(`If a child starts its own children, the JVM waits for them too.`),
+ R(`The JVM exits when the last non-daemon thread ends.`)),
+S("There's no real parent-child link",
+ P(`"Parent" and "child" are just words here. A new thread copies a few defaults from its creator (daemon flag, priority). That's all.`),
+ Y(`"The only relation: if the child is not a daemon and still runs, the program waits for it."`),
+ R(`Threads are independent once started.`)),
+S("join(): wait for a thread to finish",
+ P(`<code>t.join()</code> puts the <b>calling</b> thread into <code>WAITING</code> until <code>t</code> is TERMINATED. (<code>join(ms)</code> → TIMED_WAITING.)`),
+ P(`It also creates <b>happens-before</b>: everything <code>t</code> wrote is visible after <code>join()</code> returns.`),
+ C(String.raw`Thread t = new Thread(() -> result = compute());
+t.start();
+t.join();        // main waits here
+use(result);     // safe: join() makes t's writes visible`),
+ R(`join() = wait for the thread + see its results.`)),
+S("Example: reading results too early",
+ P(`Two threads each sum half of an array. Main adds the halves.`),
+ C(String.raw`static long left, right;
+
+public static void main(String[] args) throws Exception {
+    long[] nums = new long[10_000_000];
+    for (int i = 0; i < nums.length; i++) nums[i] = i + 1;
+
+    Thread l = new Thread(() -> { long s = 0; for (int i = 0; i < nums.length / 2; i++) s += nums[i]; left = s; });
+    Thread r = new Thread(() -> { long s = 0; for (int i = nums.length / 2; i < nums.length; i++) s += nums[i]; right = s; });
+    l.start(); r.start();
+    System.out.println("without join: total = " + (left + right));
+
+    l.join(); r.join();                     // wait for both, and see what they wrote
+    System.out.println("with join:    total = " + (left + right));
+}`),
+ O(`without join: total = 0
+with join:    total = 50000005000000`),
+ P(`Without <code>join()</code>, main read the fields before the threads had written them. No error, no warning — just a wrong number.`),
+ R(`Need a thread's result? join() first.`)),
+]},
+
+{part:"02",t:"Daemon threads",steps:[
+S("The demo",
+ C(String.raw`Thread d = new Thread(() -> {
+    try {
+        Thread.sleep(1000);
+        System.out.println("daemon completed");
+    } catch (InterruptedException e) {
+    } finally {
+        System.out.println("daemon finally");
+    }
+});
+d.setDaemon(true);   // must be BEFORE start()
+d.start();
+System.out.println("main completed");`),
+ O(`main completed`),
+ P(`That's all. The JVM exited as soon as <code>main</code> ended. The daemon was killed mid-sleep, and its <b>finally didn't run</b>.`),
+ R(`Daemons are killed at exit. Even finally is skipped.`)),
+S("The JVM doesn't wait for daemons",
+ Y(`"A kind of blatant racism in Java towards daemon threads: the main program does not wait for them. You can have 10,000 daemons — nobody waits."`),
+ Y(`"Normally at least finally is allowed to run so it can clean something. No — they aren't even given that."`),
+ P(`Chains of daemons (daemons starting daemons) — all closed instantly. The OS doesn't care about the DB connections they hold.`),
+ R(`No waiting, no cleanup.`)),
+S("Picture it: the office closing",
+ AN(`The office (JVM) closes when the last <b>employee</b> (non-daemon thread) goes home. The <b>night cleaners</b> (daemons) are sent out at that moment — even with the floor half-mopped.`),
+ P(`So a cleaner must never be holding something important, like the only key to the safe.`),
+ R(`Daemons leave when the last normal thread leaves, mid-task.`)),
+S("setDaemon after start() fails",
+ P(`The lecturer hit this live: <code>setDaemon(true)</code> <b>after</b> <code>start()</code>:`),
+ O(`java.lang.IllegalThreadStateException`),
+ R(`Set the daemon flag before start().`)),
+S("When a daemon gets to finish",
+ P(`Same demo, plus a normal thread that sleeps 2 s:`),
+ O(`main completed
+daemon completed
+daemon finally
+regular thread completed`),
+ P(`Now the JVM waits for the normal thread, so the daemon gets its second and completes normally.`),
+ R(`Daemons only live as long as some normal thread does.`)),
+S("When daemons are right",
+ P(`"So what are daemons for?" A student said "monitoring", and the lecturer accepted the keyword.`),
+ P(`A daemon fits when it's <b>helper work that means nothing once the program is gone</b>, and it holds <b>no external resources</b>.`),
+ P(`Examples: publishing memory usage, extra diagnostics logging, housekeeping timers, cache expiry.`),
+ R(`Daemon = background helper with nothing to clean up.`)),
+S("Example: a heartbeat daemon",
+ C(String.raw`Thread heartbeat = new Thread(() -> {
+    Runtime rt = Runtime.getRuntime();
+    while (true) {
+        System.out.println("[heartbeat] used memory: "
+                + (rt.totalMemory() - rt.freeMemory()) / 1_000_000 + " MB");
+        sleep(300);
+    }
+}, "heartbeat");
+heartbeat.setDaemon(true);
+heartbeat.start();
+
+sleep(1000);                                 // the real work
+System.out.println("main: work done, exiting");`),
+ O(`[heartbeat] used memory: 16 MB
+[heartbeat] used memory: 16 MB
+[heartbeat] used memory: 16 MB
+[heartbeat] used memory: 16 MB
+main: work done, exiting`),
+ P(`The heartbeat never stops by itself (<code>while (true)</code>). That's fine: when main is done, the JVM exits and the daemon goes with it. Exactly what a helper should do.`),
+ R(`A good daemon: useful while the app runs, harmless to kill.`)),
+S("The trap",
+ Y(`"If the daemon holds a DB connection and we kill it instantly, the other side cleans up by timeout. Many such threads grab all the connections, get shot, and the external system waits 30 seconds for each before it notices."`),
+ P(`More precisely: when the JVM exits, the OS closes all its sockets, so a database usually notices quickly and rolls back open transactions. The real damage is the work cut in half: unflushed buffers, half-written files, un-acknowledged messages, and remote locks or leases that are only freed <b>by timeout</b>.`),
+ P(`So: holds anything that needs a clean release → <b>not</b> a daemon. Make it a normal thread that can be stopped (chapter 19).`),
+ R(`Resources to release → never a daemon.`)),
+S("★ Deeper: cleanup at exit — shutdown hooks",
+ P(`The lecturer mentioned there are ways to exit gracefully when the program closes. In Java that's a <b>shutdown hook</b>: a thread the JVM runs while shutting down.`),
+ C(String.raw`public static void main(String[] args) throws Exception {
+    Runtime.getRuntime().addShutdownHook(new Thread(() ->
+            System.out.println("shutdown hook: flushing logs, closing connections")));
+
+    Thread d = new Thread(() -> {
+        try { Thread.sleep(5000); }
+        catch (InterruptedException e) { }
+        finally { System.out.println("daemon finally"); }
+    });
+    d.setDaemon(true);
+    d.start();
+
+    if (args.length > 0 && args[0].equals("exit")) System.exit(3);
+    if (args.length > 0 && args[0].equals("wait")) Thread.sleep(60_000);   // stay alive to be killed
+    System.out.println("main completed");
+}`),
+ TB(`<tr><th>How the program ended</th><th>Hook ran?</th><th>Daemon's finally?</th><th>Exit code</th></tr>
+ <tr><td>main finished normally</td><td>yes</td><td>no</td><td>0</td></tr>
+ <tr><td><code>System.exit(3)</code></td><td>yes</td><td>no</td><td>3</td></tr>
+ <tr><td><code>kill</code> (SIGTERM, e.g. <code>docker stop</code>; Ctrl+C sends the similar SIGINT)</td><td>yes</td><td>no</td><td>143 = 128 + 15</td></tr>
+ <tr><td><code>kill -9</code> (SIGKILL)</td><td><b>no</b></td><td>no</td><td>137 = 128 + 9</td></tr>`),
+ P(`All four cases were run for real. The daemon's <code>finally</code> never ran. The shutdown hook did, except on <code>kill -9</code>, which gives the JVM no chance at all.`),
+ P(`Keep hooks short, and don't rely on them for anything critical: power loss, <code>kill -9</code> or a JVM crash skip them.`),
+ R(`Need cleanup at exit? A shutdown hook, not a daemon's finally.`)),
+S("Two more facts (tested)",
+ P(`<b>1.</b> A thread created by a daemon is a daemon by default (it copies the flag).`),
+ O(`child of daemon isDaemon=true`),
+ P(`<b>2.</b> Virtual threads are <b>always</b> daemons:`),
+ O(`setDaemon(false) on virtual: java.lang.IllegalArgumentException: 'false' not legal for virtual threads`),
+ P(`The JVM won't wait for virtual threads. Use an executor with <code>close()</code>, or <code>join()</code>.`),
+ R(`Daemon-ness is inherited. Virtual = always daemon.`))
+]},
+
+{part:"02",t:"Designing a stoppable thread",steps:[
+S("The problem",
+ P(`The lecturer called this <b>thread design</b> — the part he says most candidates fail.`),
+ C(String.raw`Thread t = new Thread(() -> { while (true) System.out.println("kek"); });
+t.start();
+Thread.sleep(2000);
+t.interrupt();       // does it stop?
+Thread.sleep(1000);
+System.out.println("1 s after interrupt(): alive=" + t.isAlive()
+        + " state=" + t.getState() + " flag=" + t.isInterrupted());`),
+ P(`The group voted: yes. Reality (tested):`),
+ O(`1 s after interrupt(): alive=true state=RUNNABLE flag=true`),
+ P(`The "kek"s keep coming.`),
+ R(`interrupt() did not stop the loop.`)),
+S("What interrupt() really is",
+ Y(`"interrupt() is a lightweight reminder: 'buddy, you've been asked to leave.' It doesn't force anything. If the thread is RUNNABLE and busy, only a flag is set."`),
+ P(`You <b>can</b> read the flag: <code>Thread.currentThread().isInterrupted()</code>. But nothing makes you.`),
+ R(`interrupt() = set a flag. That's all.`)),
+S("Picture it: a tap on the shoulder",
+ AN(`<code>interrupt()</code> is a <b>tap on the shoulder</b>: "please stop".`),
+ P(`If the person is asleep (<code>sleep</code>, <code>wait</code>), the tap wakes them up. That's the <code>InterruptedException</code>.`),
+ P(`If they're working with headphones on (a busy loop), they won't notice — unless they glance at their shoulder now and then (checking <code>isInterrupted()</code>).`),
+ R(`interrupt() only works on threads that listen.`)),
+S("Who can interrupt a thread?",
+ P(`Only code that calls <code>t.interrupt()</code>. The JVM doesn't interrupt threads by itself.`),
+ P(`Typical callers: <code>executor.shutdownNow()</code>, <code>future.cancel(true)</code>, a framework stopping the app, or your own code.`),
+ Y(`"Who can interrupt our main thread? Nobody. In our program nobody will." — the lecturer, when he skipped handling InterruptedException in a small demo`),
+ P(`So in a tiny demo, a rough catch in <code>main</code> is harmless. In worker code (anything that might run in a pool), handle it properly with this chapter's pattern.`),
+ R(`Interrupts come only from someone calling interrupt().`)),
+S("When the flag becomes an exception",
+ P(`Waiting methods <b>throw <code>InterruptedException</code></b> if the flag is set before or during the wait:`),
+ P(`<code>Thread.sleep</code>, <code>Object.wait</code>, <code>Thread.join</code>, <code>BlockingQueue.take</code>, <code>Future.get</code>, <code>Lock.lockInterruptibly</code>, …`),
+ P(`When they throw, they <b>clear the flag</b>.`),
+ O(`sleep with flag already set throws immediately; flag now=false`),
+ R(`Waiting methods turn the flag into an exception — and clear it.`)),
+S("Where interrupt works differently (tested)",
+ P(`<ul><li><code>LockSupport.park()</code>: returns, but <b>no exception</b>; flag stays <code>true</code>.</li>
+ <li>A thread <code>BLOCKED</code> on <code>synchronized</code>: <b>ignores it</b> — stays BLOCKED; only the flag is set.</li>
+ <li>Classic socket IO on a <b>platform</b> thread: <b>ignores it</b> — kept waiting in <code>accept()</code>, still RUNNABLE.</li>
+ <li>The same socket IO on a <b>virtual</b> thread: reacts — the socket is closed and a <code>SocketException</code> is thrown.</li>
+ <li>NIO channels: react — channel closed, <code>ClosedByInterruptException</code>.</li></ul>`),
+ O(`virtual thread in accept(), interrupted -> SocketException; socket closed=true`),
+ R(`Not everything reacts to interrupt, and not always with an exception.`)),
+S("The sleep version stops",
+ P(`Put <code>Thread.sleep(100)</code> in the loop. The same <code>interrupt()</code> now stops it (tested, interrupt after 350 ms):`),
+ C(String.raw`Thread t = new Thread(() -> {
+    try {
+        while (true) { System.out.println("kek"); Thread.sleep(100); }
+    } catch (InterruptedException e) {
+        System.out.println("caught InterruptedException; flag now="
+                + Thread.currentThread().isInterrupted());
+    }
+});`),
+ O(`kek
+kek
+kek
+kek
+caught InterruptedException; flag now=false`),
+ Y(`"We happened to be sleeping when the flag arrived, and sleep threw. If you didn't design a check into your loop and weren't lucky enough to hit a sleep or wait, there's nothing you can do about that thread."`),
+ R(`Luck isn't a design. Check the flag on purpose.`)),
+S("The correct pattern",
+ C(String.raw`Thread worker = new Thread(() -> {
+    while (!Thread.currentThread().isInterrupted()) {   // 1. check in every loop
+        try {
+            doUnitOfWork();
+            Thread.sleep(100);                          // 2. waiting calls throw
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();         // 3. restore the flag
+            break;                                      //    and leave
+        }
+    }
+    cleanup();                                          // 4. clean exit
+});`),
+ O(`worker cleaned up and left, flag=true`),
+ R(`Check the flag. Catch the exception. Restore the flag. Clean up.`)),
+S("Why restore the flag (step 3)?",
+ P(`<code>sleep</code>/<code>wait</code> <b>cleared</b> the flag when they threw.`),
+ P(`If your code isn't the thread's owner (e.g. it runs inside a pool), code higher up must still see that an interrupt happened.`),
+ P(`An empty <code>catch (InterruptedException e) {}</code> "swallows" it. One of the most common real bugs.`),
+ R(`Never swallow InterruptedException.`)),
+S("Example: the swallowed interrupt",
+ C(String.raw`Thread bad = new Thread(() -> {
+    while (!Thread.currentThread().isInterrupted()) {
+        try {
+            Thread.sleep(100);
+        } catch (InterruptedException e) {
+            // ignored   <- the bug
+        }
+    }
+    System.out.println("worker: stopped");
+});
+bad.setDaemon(true);                         // only so this demo can exit
+bad.start();
+Thread.sleep(300);
+bad.interrupt();
+bad.join(1000);
+System.out.println("worker alive 1 s after interrupt()? " + bad.isAlive());`),
+ O(`worker alive 1 s after interrupt()? true`),
+ P(`The interrupt arrived during <code>sleep</code>. <code>sleep</code> threw and <b>cleared</b> the flag. The empty catch ignored it. The loop checked the flag: false. Keep going. Forever.`),
+ P(`Now replace the comment with <code>Thread.currentThread().interrupt();</code>:`),
+ O(`worker: stopped
+worker alive 1 s after interrupt()? false`),
+ R(`Swallowing the interrupt = a thread that can't be stopped.`)),
+S("isInterrupted() vs interrupted()",
+ Y(`"There are two variants: in one you read the state and it resets, in the other it doesn't. For our purposes isInterrupted() is enough."`),
+ TB(`<tr><th>Call</th><th>Static?</th><th>Clears the flag?</th><th>Use when</th></tr>
+ <tr><td><code>t.isInterrupted()</code></td><td>no</td><td><b>no</b></td><td>checking (your loop, another thread)</td></tr>
+ <tr><td><code>Thread.interrupted()</code></td><td>yes, current thread only</td><td><b>yes</b></td><td>you handle the interrupt and want to consume it</td></tr>`),
+ O(`isInterrupted=true then again true
+Thread.interrupted()=true then isInterrupted=false`),
+ R(`isInterrupted reads. interrupted() reads and clears.`)),
+S("stop(), suspend(), resume(): gone",
+ P(`<code>stop()</code>: deprecated since Java 1.2. In JDK 21 it just throws (tested):`),
+ O(`stop():    UnsupportedOperationException
+suspend(): UnsupportedOperationException
+resume():  UnsupportedOperationException`),
+ P(`Why <code>stop()</code> was abandoned: killing a thread at a random instruction released its locks with data half-updated. Other threads then saw broken objects.`),
+ P(`<code>suspend()</code>/<code>resume()</code> caused deadlocks (a suspended thread kept its locks).`),
+ R(`There is no way to kill a thread in modern Java.`)),
+S("yield(): don't",
+ P(`<code>Thread.yield()</code> = a wish: "give my CPU time to other threads". The scheduler may ignore it.`),
+ Y(`"It made sense in embedded-style optimisation; bots still recommend it; the general recommendation is don't."`),
+ P(`Only modern use: inside spin-wait loops in lock-free code — and there <code>Thread.onSpinWait()</code> is the better hint.`),
+ R(`yield() is a hint that usually does nothing useful.`)),
+S("Interview: \"Can you stop a thread?\"",
+ P(`First ask back: <b>"What do you mean by stop?"</b>`),
+ P(`<ul><li><b>Force RUNNABLE → TERMINATED?</b> No. Not possible (no <code>stop()</code>).</li>
+ <li><b>RUNNABLE → WAITING and back?</b> Yes: <code>LockSupport.park()</code> / <code>unpark(t)</code>. Locks are built on this.</li>
+ <li><b>Ask it politely to finish?</b> Yes: <code>interrupt()</code> + a loop designed for it. The normal answer.</li>
+ <li><b>Kill the whole process?</b> <code>System.exit(n)</code>. A student suggested it live; the lecturer tried it and it worked. It ends the <b>process</b>, not the thread: "an emergency exit with a non-zero code — a very bad idea in production, a last resort."</li>
+ <li><b>It's a daemon?</b> Nobody asks it; it's killed at JVM exit.</li></ul>`),
+ R(`Reframe first. Then: interrupt + cooperative loop.`)),
+S("LockSupport.park() / unpark()",
+ C(String.raw`Thread worker = new Thread(() -> {
+    System.out.println("worker: parking...");
+    LockSupport.park();                                   // RUNNABLE -> WAITING
+    System.out.println("worker: unparked, interrupted="
+            + Thread.currentThread().isInterrupted());
+});
+worker.start();
+Thread.sleep(100);
+System.out.println("main sees worker state=" + worker.getState());
+LockSupport.unpark(worker);                               // WAITING -> RUNNABLE
+worker.join();`),
+ O(`worker: parking...
+main sees worker state=WAITING
+worker: unparked, interrupted=false`),
+ P(`(After <code>join()</code>, <code>worker.getState()</code> is <code>TERMINATED</code>.)`),
+ R(`park() = pause me. unpark(t) = let t continue.`)),
+S("park(): four facts to remember",
+ P(`<ol><li><b>Permit-based</b>: <code>unpark</code> <i>before</i> <code>park</code> leaves a permit, so the next <code>park</code> returns at once. (Tested: returned in 0 ms.) No lost wake-up, unlike <code>notify</code> before <code>wait</code>.</li>
+ <li>But the thread must be <b>started</b>: <code>unpark</code> on an unstarted thread does nothing. (Tested: the permit was lost; park waited the full 300 ms.)</li>
+ <li><code>park</code> can return for <b>no reason</b> (spuriously) — always call it in a loop that re-checks your condition.</li>
+ <li>If interrupted, <code>park</code> returns without an exception. Check the flag.</li></ol>`),
+ P(`<code>ReentrantLock</code>, <code>Semaphore</code>, <code>CountDownLatch</code>, AQS — all built on <code>LockSupport</code>.`),
+ R(`park in a loop; unpark only started threads.`))
+]},
+
+{part:"02",t:"Virtual threads",steps:[
+S("The problem they solve",
+ P(`IO-bound work needs <b>many</b> things happening at once, because each spends most of its life waiting.`),
+ P(`But each platform thread costs ~1 MB and an OS scheduling slot.`),
+ Y(`"Come to the OS with 10,000 threads and it says: relax, I'm not scheduling 10,000. You'll just get enormous waiting." — and before that, probably OOM.`),
+ P(`Stuck: few threads → cores idle while everyone waits. Many threads → the OS chokes. The old way out was callbacks / reactive code (hard to write and read).`),
+ R(`Platform threads are too heavy for massive waiting.`)),
+S("The idea",
+ Y(`"To us a virtual thread looks exactly like a normal thread — same API, same blocking calls. But while it runs it borrows a real thread; the moment it waits, it detaches — 'I'm going to sleep, whoever has work, take the real thread'. The real thread is never blocked."`),
+ C(`virtual threads (cheap, thousands..millions):  V1  V2  V3  V4  V5  V6  V7  V8 ...
+                                                  \\  |   |  /    \\   |   /
+"mounted" only while running                       \\ |   | /      \\  |  /
+carrier (platform) threads, ~ number of cores:     C1   C2        C3   C4   <- a ForkJoinPool
+                                                     \\   |         |   /
+the OS scheduler only sees the carriers:              └──┴─────────┴──┘`,'text'),
+ R(`Virtual threads borrow real threads only while running.`)),
+S("Picture it: waiters in a restaurant",
+ AN(`<b>Platform threads</b> = one waiter per table, who stands at the table while the kitchen cooks. 100 tables = 100 waiters, mostly standing still.`),
+ P(`<b>Virtual threads</b> = 4 waiters (carriers) for 100 tables. A waiter takes an order, passes it to the kitchen, and serves another table while the food cooks. When a dish is ready, <b>any</b> free waiter brings it.`),
+ P(`The tables are the virtual threads. The waiters are the carrier threads. Nobody stands around waiting.`),
+ R(`Virtual threads: the waiter never waits with the customer.`)),
+S("Mount and unmount",
+ P(`V3 calls <code>Thread.sleep</code>, <code>socket.read</code>, <code>queue.take</code>, <code>lock.lock()</code>…`),
+ P(`→ The JVM <b>unmounts</b> V3 from its carrier. V3's stack is copied to the heap.`),
+ P(`→ Another ready virtual thread is mounted on that carrier.`),
+ P(`→ When V3's wait ends, it continues on <b>any</b> free carrier.`),
+ P(`The OS sees ~10 always-busy carriers instead of 10,000 mostly idle threads.`),
+ Y(`"When there are only 10 real threads, the OS schedules them far more often; all the waiting moves into a different atmosphere."`),
+ R(`Waiting costs a small heap copy, not a whole OS thread.`)),
+S("\"Doesn't saving the stack cost something?\"",
+ Y(`"Maybe it does, but by the results virtual threads still win."`),
+ P(`Saving a small stack to the heap is far cheaper than an OS context switch.`),
+ P(`Same idea as <b>Kotlin coroutines</b> and <b>Go goroutines</b>: lightweight threads scheduled in user space.`),
+ R(`Cheap switching is the whole trick.`)),
+S("The numbers (tested)",
+ P(`10,000 tasks, each <code>Thread.sleep(10 ms)</code>:`),
+ O(`10 platform threads, 10k x sleep(10ms): 10092 ms   <- 10,000 × 10 ms / 10 threads
+virtual threads,     10k x sleep(10ms):   304 ms   <- all sleep at the same time (varies per run)`),
+ P(`(This machine has 1 core. The virtual threads still win, because the tasks are waiting, not computing.)`),
+ R(`For waiting work: virtual threads win by a lot.`)),
+S("What a virtual thread looks like (tested)",
+ O(`virtual: isVirtual=true isDaemon=true state=NEW
+virtual sleeping: TIMED_WAITING
+inside virtual: VirtualThread[#33]/runnable@ForkJoinPool-1-worker-1   <- its carrier`),
+ P(`Everything from chapters 16–19 still applies: same six states, same <code>interrupt()</code>, same design rules.`),
+ R(`Same Thread API. Always daemon.`)),
+S("How to create them",
+ C(String.raw`// one-off
+Thread.ofVirtual().name("vt-1").start(() -> work());
+Thread.startVirtualThread(() -> work());
+
+// the normal way: one virtual thread per task
+try (ExecutorService ex = Executors.newVirtualThreadPerTaskExecutor()) {
+    for (int i = 0; i < 100_000; i++) ex.submit(() -> callSomeHttpService());
+}   // close() waits for all tasks here`),
+ R(`Normal way: newVirtualThreadPerTaskExecutor in try-with-resources.`)),
+S("Example: calling 3 services",
+ C(String.raw`static String call(String service, int ms) throws InterruptedException {
+    Thread.sleep(ms);                        // pretend network call
+    return service + ": ok";
+}
+
+public static void main(String[] args) throws Exception {
+    long t0 = System.currentTimeMillis();
+    System.out.println(call("user-service", 300));
+    System.out.println(call("order-service", 500));
+    System.out.println(call("price-service", 700));
+    System.out.println("one after another: " + (System.currentTimeMillis() - t0) + " ms");
+
+    t0 = System.currentTimeMillis();
+    try (ExecutorService ex = Executors.newVirtualThreadPerTaskExecutor()) {
+        Future<String> user   = ex.submit(() -> call("user-service", 300));
+        Future<String> orders = ex.submit(() -> call("order-service", 500));
+        Future<String> prices = ex.submit(() -> call("price-service", 700));
+        System.out.println(user.get());
+        System.out.println(orders.get());
+        System.out.println(prices.get());
+    }
+    System.out.println("at the same time:  " + (System.currentTimeMillis() - t0) + " ms");
+}`),
+ O(`user-service: ok
+order-service: ok
+price-service: ok
+one after another: 1503 ms
+user-service: ok
+order-service: ok
+price-service: ok
+at the same time:  714 ms`),
+ P(`One after another: 300 + 500 + 700 = 1500 ms. At the same time: about as long as the slowest call, ~700 ms.`),
+ P(`The code still looks simple: <code>call()</code> just waits, <code>get()</code> just waits. No callbacks.`),
+ R(`Parallel calls: total ≈ the slowest call, not the sum.`)),
+S("Example: one service is too slow",
+ C(String.raw`static String call(String service, int ms) throws InterruptedException {
+    Thread.sleep(ms);
+    return service + ": ok";
+}
+
+public static void main(String[] args) throws Exception {
+    long t0 = System.currentTimeMillis();
+    try (ExecutorService ex = Executors.newVirtualThreadPerTaskExecutor()) {
+        Future<String> user   = ex.submit(() -> call("user-service", 300));
+        Future<String> prices = ex.submit(() -> call("price-service", 5000));   // too slow
+        System.out.println(user.get(1, TimeUnit.SECONDS));
+        try {
+            System.out.println(prices.get(1, TimeUnit.SECONDS));
+        } catch (TimeoutException e) {
+            prices.cancel(true);             // interrupts that virtual thread
+            System.out.println("price-service: timed out, using cached prices");
+        }
+    }
+    System.out.println("total: " + (System.currentTimeMillis() - t0) + " ms");
+}`),
+ O(`user-service: ok
+price-service: timed out, using cached prices
+total: 1314 ms`),
+ P(`Total ≈ 0.3 s (user-service) + 1 s (the timeout for prices).`),
+ P(`<code>get(1, SECONDS)</code> waits at most 1 s. On timeout, <code>cancel(true)</code> interrupts that virtual thread, so <code>close()</code> doesn't sit through the full 5 s.`),
+ R(`Always put a timeout on remote calls.`)),
+S("Example: 10,000 users at once",
+ C(String.raw`long t0 = System.currentTimeMillis();
+AtomicInteger served = new AtomicInteger();
+try (ExecutorService ex = Executors.newVirtualThreadPerTaskExecutor()) {
+    for (int i = 0; i < 10_000; i++) {
+        ex.submit(() -> { Thread.sleep(1000); served.incrementAndGet(); return null; });
+    }
+}
+System.out.println(served.get() + " users served in " + (System.currentTimeMillis() - t0) + " ms");`),
+ O(`10000 users served in 1125 ms`),
+ P(`10,000 threads, each waiting 1 s, all done in about 1 s — on a machine with <b>1 core</b>.`),
+ P(`10,000 platform threads would reserve about 10 GB of stack address space, and the OS would struggle to schedule them.`),
+ R(`Virtual threads make "one thread per user" possible again.`)),
+S("When to use them (the lecturer's view)",
+ Y(`"Everything is moving towards: just use virtual threads everywhere; they decide internally how many real threads they need. At minimum: lots of IO ⇒ virtual threads, 100 %. Lots of IO means lots of blocking, lots of blocking would mean lots of real threads — memory, OS scheduling — so: virtual threads. Inside there may be a dozen carriers, and since we'd almost always be sleeping on a block anyway, the efficiency is cosmic. I can't pull an example out of my head where real threads are definitely better."`),
+ P(`(The next screen gives you those examples anyway — interviewers ask "when not?".)`),
+ Y(`"This feature could have sunk Java. Java could have lost to Kotlin and Go. The language was saved by it."`),
+ R(`Lots of IO → virtual threads. No doubt.`)),
+S("When platform threads are still better",
+ TB(`<tr><th>Situation</th><th>Use</th><th>Why</th></tr>
+ <tr><td>Pure CPU work</td><td>platform pool ≈ cores (or ForkJoinPool)</td><td>no waiting to hide; still only N cores</td></tr>
+ <tr><td>Hot loops that must never be paused (trading, pinned to cores)</td><td>platform, pinned</td><td>virtual threads unmount on blocking and can't be pinned to a core</td></tr>
+ <tr><td>Heavy <code>ThreadLocal</code> caches</td><td>platform</td><td>millions of threads × cache = memory explosion; use <code>ScopedValue</code> (preview in 21, final in JDK 25)</td></tr>
+ <tr><td>Blocking inside <code>synchronized</code> on JDK ≤ 23, or inside native (JNI) code on any JDK</td><td>platform, or <code>ReentrantLock</code> instead of synchronized</td><td>the virtual thread gets <b>pinned</b> to its carrier and can starve the carrier pool</td></tr>
+ <tr><td>IO-heavy: web servers, service calls, DB, message consumers</td><td><b>virtual</b></td><td>the 100 % case</td></tr>`),
+ P(`The lecturer believed the <code>synchronized</code> bug was "fixed in fresh 21 builds". Precisely: the fix (for <code>synchronized</code> and <code>Object.wait</code>) arrived in <b>JDK 24 (JEP 491)</b> and was not backported to 21. On JDK 21, avoid blocking inside <code>synchronized</code> on virtual threads, or use <code>ReentrantLock</code>. Pinning inside native code remains on every JDK.`),
+ R(`CPU, hot loops, big ThreadLocals, old-JDK synchronized → platform.`)),
+S("Don't pool virtual threads",
+ P(`They're meant to be created per task and thrown away.`),
+ P(`And don't expect CPU-heavy loops on them to run faster than the number of carriers (≈ cores).`),
+ R(`One virtual thread per task. No pool.`)),
+S("\"How is this different from a thread pool?\"",
+ Y(`"A thread pool holds real threads. A pool of 10,000 real threads: you probably can't get the memory, and the OS won't schedule them anyway. A pool of 10 real threads is fast, but only 10 things can be blocked at once. Virtual threads give you 10,000 things blocked at once on top of ~10 real threads."`),
+ P(`Pools and thread <b>types</b> are separate topics.`),
+ R(`Pool = reuse a few real threads. Virtual = many cheap threads on a few real ones.`)),
+S("\"If the OS already parks blocked threads, why virtual threads?\"",
+ P(`A student asked this at the end of the lecture.`),
+ P(`Parking frees the <b>CPU core</b>, but not the <b>thread</b>. Each parked platform thread still holds its stack (~1 MB reserved) and an OS thread slot.`),
+ P(`So 10,000 waiting tasks = 10,000 OS threads: memory trouble, and a scheduler juggling thousands of threads.`),
+ P(`With virtual threads, a waiting task costs a small object on the heap, and only about as many real threads as cores exist.`),
+ Y(`"It's not such a genius that it would say: I'm so efficient, give me a thousand threads. In practice you'd fall over with OutOfMemory." — the lecturer`),
+ R(`OS parking saves CPU. Virtual threads save threads.`)),
+]},
+
+{part:"02",t:"Kinds of threads side by side",steps:[
+S("Platform vs daemon vs virtual",
+ TB(`<tr><th></th><th>Platform (non-daemon)</th><th>Daemon</th><th>Virtual (JDK 21+)</th></tr>
+ <tr><td>OS thread behind it</td><td>1 : 1</td><td>1 : 1</td><td>many : few (carriers)</td></tr>
+ <tr><td>Cost</td><td>~1 MB stack, OS call</td><td>same</td><td>small stack on the heap, grows as needed</td></tr>
+ <tr><td>JVM waits for it at exit</td><td><b>yes</b></td><td>no (killed, finally skipped)</td><td>no (always daemon)</td></tr>
+ <tr><td>Blocking (sleep, IO, wait)</td><td>blocks the OS thread</td><td>blocks the OS thread</td><td>unmounts; carrier stays free</td></tr>
+ <tr><td>Typical count</td><td>tens … low thousands</td><td>few</td><td>thousands … millions</td></tr>
+ <tr><td>Use for</td><td>CPU work, hot loops, affinity</td><td>background helpers, no resources</td><td>IO-bound, high concurrency</td></tr>
+ <tr><td>Pool them?</td><td>yes (03, 04)</td><td>rarely</td><td><b>no</b> — one per task</td></tr>`),
+ R(`Three kinds. Each has its job.`))
+]},
+
+{part:"02",t:"Low-latency notes",steps:[
+S("For trading interviews, part 1",
+ P(`<b>Affinity</b>: pin critical threads to isolated cores (<code>isolcpus</code>, <code>taskset</code>, OpenHFT Affinity). "The only thing we can really do to the scheduler."`),
+ P(`<b>Never sleep or block on the hot path</b>: parking and waking a thread costs microseconds (OS context switch, cold caches).`),
+ P(`Hot loops <b>busy-spin</b> on a dedicated core instead:`),
+ C(String.raw`while (!ready) Thread.onSpinWait();   // burn a core to save latency`),
+ R(`Low latency = spin, don't sleep. The opposite of virtual threads.`)),
+S("For trading interviews, part 2",
+ P(`<b>Fewer threads than cores</b> on the hot path, so nothing is ever descheduled.`),
+ P(`One thread per stage (network in → parse → strategy → order out), handing data over through single-producer / single-consumer queues (Disruptor-style ring buffers).`),
+ P(`Everything in RAM. The bottleneck is the <b>network card</b>, not the disk.`),
+ P(`Virtual threads are for the <b>non-critical</b>, IO-heavy parts (risk reports, REST, monitoring), not the tick-to-trade path.`),
+ R(`Hot path: few pinned spinning threads. Everything else: virtual.`))
+]},
+
+{part:"02",t:"Pros and cons cheat sheet",steps:[
+S("Each tool, pro and con",
+ TB(`<tr><th>Tool</th><th>Pro</th><th>Con</th></tr>
+ <tr><td><code>new Thread().start()</code></td><td>trivial</td><td>expensive per task, no reuse, no limit, no exception handling, unnamed; not for app code</td></tr>
+ <tr><td>Daemon</td><td>never delays JVM exit</td><td>killed without finally; unsafe with external resources</td></tr>
+ <tr><td>Virtual</td><td>cheap; simple blocking code; massive IO concurrency; executor auto-closes</td><td>no CPU gain; can't be pinned to a core; synchronized pinning before JDK 24; ThreadLocal blow-up; always daemon</td></tr>
+ <tr><td><code>interrupt()</code></td><td>safe, cooperative</td><td>works only if the loop was designed for it; classic blocking IO may ignore it</td></tr>
+ <tr><td><code>stop()</code> / <code>System.exit()</code></td><td>it stops</td><td>stop() is gone (throws); exit() kills the whole process</td></tr>`),
+ R(`No free lunch — know each tool's cost.`))
+]},
+
+{part:"02",t:"Interview practice (file 02)",steps:[
+S("Questions 1–6",
+ P(`Answer out loud first. Then open.`),
+ Q(`Define a thread in one sentence.`,`<p>An independent activity with its own execution stack, which shares memory with the other threads of the same process.</p>`),
+ Q(`start() vs run()? What does a second start() do?`,`<p>start() creates a new thread and runs the Runnable there. run() is a normal call on the current thread. Second start() → IllegalThreadStateException.</p>`),
+ Q(`Name all six states. Why is there no RUNNING? Why isn't INTERRUPTED a state?`,`<p>NEW, RUNNABLE, BLOCKED, WAITING, TIMED_WAITING, TERMINATED. RUNNING is OS vocabulary; Java merges it into RUNNABLE. Interrupted is a flag, not a state.</p>`),
+ Q(`WAITING vs TIMED_WAITING vs BLOCKED — which calls lead to each?`,`<p>WAITING: wait(), join(), park(). TIMED_WAITING: sleep(ms), wait(ms), join(ms), parkNanos/parkUntil. BLOCKED: entering synchronized while another thread holds the monitor (or re-taking it after wait).</p>`),
+ Q(`Does main returning end the program? What about daemons?`,`<p>No — the JVM exits when the last non-daemon thread ends. Daemons are then killed, and their finally blocks don't run.</p>`),
+ Q(`Why restore the interrupt flag after catching InterruptedException?`,`<p>Throwing cleared the flag. Code higher up (e.g. the pool that owns the thread) must still see that an interrupt was requested.</p>`),
+ R(`Short, exact answers win interviews.`)),
+S("Questions 7–10",
+ Q(`"Stop this thread."`,`<p>Ask what "stop" means. Force-kill: impossible (stop() throws). Pause/resume: park/unpark. Politely: interrupt() + a cooperative loop (the normal answer). Whole process: System.exit — last resort.</p>`),
+ Q(`Virtual threads: what problem, and how do they work?`,`<p>Problem: platform threads are too heavy for massive IO waiting. How: many virtual threads mount on a few carrier threads (a ForkJoinPool) and unmount when they block, so carriers never block.</p>`),
+ Q(`When not to use virtual threads?`,`<p>Pure CPU work, hot loops that need pinning/affinity, heavy ThreadLocal caches, blocking inside synchronized before JDK 24 (or inside native code).</p>`),
+ Q(`Why are virtual threads daemons, and why not pool them?`,`<p>They're always daemons by design (setDaemon(false) throws), so wait for them with an executor's close() or join(). They're cheap, so you create one per task; pooling adds nothing.</p>`),
+ R(`If these feel easy, you're ready for files 03 and 04.`))
+]},
+{part:"Practice",t:"Practice: write it yourself",steps:[
+S("How to practise",
+ P(`Each exercise: read the task, then write the code yourself in your IDE.`),
+ P(`Stuck? Open the <b>hint</b>. Done? Compare with the <b>solution</b>. Every solution here was run on JDK 21, with its real output.`),
+ R(`Typing it yourself is what makes it stick.`)),
+S("Exercise 1: sum an array with N threads",
+ P(`Write <code>long parallelSum(long[] nums, int n)</code>. Split the array into n parts, one thread per part, and return the total.`),
+ P(`Test: numbers 0 to 1,000,000 → the answer must be <b>500000500000</b>, for any n.`),
+ Q(`Hint`,`<p>Give each thread its own slot in a <code>long[] partial</code> array, so no two threads write to the same place. Call <code>join()</code> on each thread before you read its slot.</p>`),
+ SOL(String.raw`static long parallelSum(long[] nums, int n) throws InterruptedException {
+    long[] partial = new long[n];                  // one slot per thread: no shared slot
+    Thread[] threads = new Thread[n];
+    int chunk = (nums.length + n - 1) / n;         // round up so nothing is left over
+    for (int t = 0; t < n; t++) {
+        int id = t, from = t * chunk, to = Math.min(nums.length, from + chunk);
+        threads[t] = new Thread(() -> {
+            long s = 0;
+            for (int i = from; i < to; i++) s += nums[i];
+            partial[id] = s;
+        }, "summer-" + t);
+        threads[t].start();
+    }
+    long total = 0;
+    for (int t = 0; t < n; t++) {
+        threads[t].join();                         // wait, and see its result
+        total += partial[t];
+    }
+    return total;
+}
+
+public static void main(String[] args) throws Exception {
+    long[] nums = new long[1_000_001];
+    for (int i = 0; i < nums.length; i++) nums[i] = i;
+    System.out.println("4 threads: " + parallelSum(nums, 4));
+    System.out.println("3 threads: " + parallelSum(nums, 3));
+}`,`4 threads: 500000500000
+3 threads: 500000500000`),
+ R(`Own slot per thread + join = correct parallel result.`)),
+S("Exercise 2: fix the thread that never stops",
+ P(`Take the visibility example from chapter 10 (<code>while (running) { }</code>). Make the worker stop after main sets <code>running = false</code>. Change as little as possible.`),
+ Q(`Hint`,`<p>The worker keeps reading an old copy. Which keyword tells Java "another thread changes this field"?</p>`),
+ SOL(`static volatile boolean running = true;     // the only change`,`main: set running = false
+worker: saw running=false, stopping
+main: worker still alive 3 s later? false`),
+ R(`Shared flag → volatile.`)),
+S("Exercise 3: a ticker you can stop",
+ P(`A thread named "ticker" prints <code>tick 1</code>, <code>tick 2</code>, … every 200 ms.`),
+ P(`Main lets it run for 1 s, then stops it with <code>interrupt()</code>. The ticker must print <code>ticker: stopped cleanly</code> and end in <code>TERMINATED</code>.`),
+ Q(`Hint`,`<p>Loop while <code>!isInterrupted()</code>. In the catch around <code>sleep</code>, restore the flag.</p>`),
+ SOL(String.raw`Thread ticker = new Thread(() -> {
+    int n = 0;
+    while (!Thread.currentThread().isInterrupted()) {
+        System.out.println("tick " + (++n));
+        try {
+            Thread.sleep(200);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();    // restore -> the loop ends
+        }
+    }
+    System.out.println("ticker: stopped cleanly");
+}, "ticker");
+ticker.start();
+Thread.sleep(1000);
+ticker.interrupt();
+ticker.join();
+System.out.println("ticker state: " + ticker.getState());`,`tick 1
+tick 2
+tick 3
+tick 4
+tick 5
+ticker: stopped cleanly
+ticker state: TERMINATED`),
+ R(`Check the flag + restore it = a thread that stops on request.`)),
+S("Exercise 4: load 5 pages at once",
+ P(`<code>fetch(page, ms)</code> waits <code>ms</code> and returns <code>"page loaded"</code>. Load 5 pages that take 200, 400, 600, 800 and 1000 ms.`),
+ P(`Use virtual threads. Print the results in page order. Total time: about 1 s, not 3 s.`),
+ Q(`Hint`,`<p><code>newVirtualThreadPerTaskExecutor()</code> in try-with-resources. Submit each page, keep the <code>Future</code>s in a list, then <code>get()</code> them in order.</p>`),
+ SOL(String.raw`static String fetch(String page, int ms) throws InterruptedException {
+    Thread.sleep(ms);                               // pretend download
+    return page + " loaded";
+}
+
+public static void main(String[] args) throws Exception {
+    long t0 = System.currentTimeMillis();
+    int[] times = {200, 400, 600, 800, 1000};
+    List<Future<String>> results = new ArrayList<>();
+    try (ExecutorService ex = Executors.newVirtualThreadPerTaskExecutor()) {
+        for (int i = 0; i < times.length; i++) {
+            String page = "page-" + (i + 1);
+            int ms = times[i];
+            results.add(ex.submit(() -> fetch(page, ms)));
+        }
+        for (Future<String> f : results) System.out.println(f.get());   // in order
+    }
+    System.out.println("all 5 pages in " + (System.currentTimeMillis() - t0) + " ms");
+}`,`page-1 loaded
+page-2 loaded
+page-3 loaded
+page-4 loaded
+page-5 loaded
+all 5 pages in 1016 ms`),
+ R(`Total ≈ the slowest page.`)),
+S("Exercise 5: spot the bug (1)",
+ P(`"Downloading two files takes twice as long as expected." Why?`),
+ C(String.raw`Thread a = new Thread(() -> download("file-1"));
+Thread b = new Thread(() -> download("file-2"));
+a.run();
+b.run();
+System.out.println("both downloads done");`),
+ Q(`Your answer?`,`<p><code>run()</code> is a normal method call: both downloads run one after another, on <code>main</code>. Use <code>start()</code> on both, then <code>join()</code> both before printing.</p>`),
+ R(`run() = no new thread.`)),
+S("Exercise 6: spot the bug (2)",
+ P(`"We call <code>shutdownNow()</code> on the pool, but this worker never ends." Why?`),
+ C(String.raw`Runnable worker = () -> {
+    while (!Thread.currentThread().isInterrupted()) {
+        try {
+            processNextBatch();
+            Thread.sleep(500);
+        } catch (InterruptedException e) {
+            System.out.println("interrupted, but let's keep going");
+        }
+    }
+};`),
+ Q(`Your answer?`,`<p><code>shutdownNow()</code> interrupts the worker. The interrupt usually arrives during <code>sleep</code>, which throws and <b>clears</b> the flag. The catch doesn't restore it, so the loop condition sees "not interrupted" and continues forever.</p><p>Fix: <code>Thread.currentThread().interrupt();</code> in the catch (and/or <code>break</code>).</p>`),
+ R(`Never swallow InterruptedException.`)),
+S("Exercise 7: explain it out loud",
+ Q(`Why can two threads both withdraw 100 from an account holding 100?`,`<p>Check-then-act: both check the balance before either subtracts, so both see 100. The check and the act must be one atomic step (e.g. <code>synchronized</code>).</p>`),
+ Q(`Why does main print total = 0 in the parallel-sum example?`,`<p>It reads the fields before the threads have finished (or before their writes are visible). <code>join()</code> fixes both: it waits, and it guarantees main sees what they wrote.</p>`),
+ Q(`Why does the flag loop never end without volatile?`,`<p>Visibility: nothing tells Java another thread changes the field, so the JIT may read it once and reuse the value forever. <code>volatile</code> forces a real read every time.</p>`),
+ Q(`Why does interrupt() stop a thread in sleep() but not a thread in while (true) { }?`,`<p><code>interrupt()</code> only sets a flag. <code>sleep()</code> checks it and throws. A busy loop never checks it, so nothing happens.</p>`),
+ Q(`Why are virtual threads fast for 10,000 waiting users, but no faster for heavy computing?`,`<p>While a virtual thread waits, it leaves its carrier, so a few carriers serve thousands of waiting threads. Computing never waits, so it can only use as many carriers as there are cores.</p>`),
+ R(`If you can explain all five out loud, you've got the basics.`))
+]}
+];
+
+/* ---------- helpers ---------- */
+const $=s=>document.querySelector(s);
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+const KW=new Set('abstract boolean break case catch class continue default do else extends final finally for if implements import instanceof int long new null private protected public return static super switch this throw throws true false try var void while'.split(' '));
+function hlJava(line){
+  // split off // comment (not inside a string)
+  let inS=false, cut=-1;
+  for(let i=0;i<line.length;i++){const ch=line[i];
+    if(ch==='\\'&&inS){i++;continue}
+    if(ch==='"'){inS=!inS;continue}
+    if(!inS&&ch==='/'&&line[i+1]==='/'){cut=i;break}}
+  const codePart=cut<0?line:line.slice(0,cut), com=cut<0?'':line.slice(cut);
+  const re=/("(?:[^"\\]|\\.)*")|(@\w+)|\b(\d[\d_]*L?)\b|\b([A-Za-z_]\w*)\b/g;
+  let out='',last=0,m;
+  while((m=re.exec(codePart))){
+    out+=esc(codePart.slice(last,m.index));
+    if(m[1])out+='<span class="ts">'+esc(m[1])+'</span>';
+    else if(m[2])out+='<span class="tk">'+esc(m[2])+'</span>';
+    else if(m[3])out+='<span class="tn">'+m[3]+'</span>';
+    else{const w=m[4]; if(KW.has(w))out+='<span class="tk">'+w+'</span>'; else if(/^[A-Z]/.test(w)&&!/^[A-Z_]+$/.test(w))out+='<span class="tt">'+w+'</span>'; else out+=w;}
+    last=re.lastIndex;
+  }
+  out+=esc(codePart.slice(last));
+  if(com)out+='<span class="tc">'+esc(com)+'</span>';
+  return out;
+}
+function hl(src,lang){
+  if(lang==='java')return src.split('\n').map(hlJava).join('\n');
+  if(lang==='bash')return src.split('\n').map(l=>{const i=l.indexOf('  #');return i<0?esc(l):esc(l.slice(0,i))+'<span class="tc">'+esc(l.slice(i))+'</span>'}).join('\n');
+  return esc(src);
+}
+function block(b){
+  switch(b[0]){
+    case 'p':return b[1].trim().startsWith('<')&&!b[1].trim().startsWith('<b')&&!b[1].trim().startsWith('<code')&&!b[1].trim().startsWith('<kbd')&&!b[1].trim().startsWith('<span')?b[1]:'<p>'+b[1]+'</p>';
+    case 'code':return '<div class="codebox"><pre><code>'+hl(b[1],b[2])+'</code></pre></div>';
+    case 'out':return '<div class="out"><div class="lbl">Output</div><pre><code>'+esc(b[1])+'</code></pre></div>';
+    case 'rem':return '<p class="rem"><span>Remember</span>'+b[1]+'</p>';
+    case 'quote':return '<p class="quote">'+b[1]+'</p>';
+    case 'q':return '<details class="q'+(b[1]==='Hint'?' hint':'')+'"><summary>'+b[1]+'</summary><div class="a">'+b[2]+'</div></details>';
+    case 'w':return '<div data-w="'+b[1]+'"></div>';
+    case 'an':return '<div class="an"><span>Picture it</span>'+b[1]+'</div>';
+    case 'sol':return '<details class="q sol"><summary>Solution</summary><div class="a"><div class="codebox"><pre><code>'+hl(b[1],'java')+'</code></pre></div>'+(b[2]?'<div class="out"><div class="lbl">Output</div><pre><code>'+esc(b[2])+'</code></pre></div>':'')+'</div></details>';
+  }
+  return '';
+}
+
+/* ---------- state ---------- */
+const flat=[]; CH.forEach((c,ci)=>c.steps.forEach((s,si)=>flat.push({ci,si})));
+function load(k,d){try{const v=localStorage.getItem('tb.'+k);return v==null?d:JSON.parse(v)}catch(e){return d}}
+function save(k,v){try{localStorage.setItem('tb.'+k,JSON.stringify(v))}catch(e){}}
+let idx=Math.min(Math.max(0,load('idx',0)|0),flat.length-1);
+let seen=new Set(load('seen',[]));
+let mode=load('mode','step')==='chapter'?'chapter':'step';
+
+function stepCard(ci,si,withFocus){
+  const s=CH[ci].steps[si];
+  return '<article class="step"><h2'+(withFocus?' tabindex="-1" id="focus"':'')+'><span class="snum">'+(si+1)+'.</span>'+s.t+'</h2>'+s.x.map(block).join('')+'</article>';
+}
+function render(focus){
+  const {ci,si}=flat[idx];
+  const ch=CH[ci];
+  seen.add(idx); save('seen',[...seen]); save('idx',idx);
+  $('#chname').textContent='Chapter '+ci+': '+ch.t;
+  const partTxt=ch.part==='Start'?'':(ch.part==='Practice'?'Practice, ':'File '+ch.part+', ');
+  if(mode==='step'){
+    $('#main').innerHTML=stepCard(ci,si,true);
+    $('#pos').textContent=partTxt+'step '+(si+1)+' of '+ch.steps.length;
+    $('#modebtn').textContent='Show whole chapter';
+    $('#back').disabled=idx===0;
+    $('#next').disabled=idx===flat.length-1;
+    $('#next').textContent=idx===flat.length-1?'Finished':(si===ch.steps.length-1?'Next chapter':'Next');
+  }else{
+    $('#main').innerHTML=ch.steps.map((_,k)=>stepCard(ci,k,k===0)).join('');
+    ch.steps.forEach((_,k)=>seen.add(flat.findIndex(f=>f.ci===ci&&f.si===k))); save('seen',[...seen]);
+    $('#pos').textContent=partTxt+ch.steps.length+' steps';
+    $('#modebtn').textContent='One step at a time';
+    $('#back').disabled=ci===0;
+    $('#next').disabled=ci===CH.length-1;
+    $('#next').textContent='Next chapter';
+  }
+  $('#bar').style.width=((idx+1)/flat.length*100)+'%';
+  document.querySelectorAll('[data-w]').forEach(el=>{const f=WIDGETS[el.dataset.w];if(f)f(el)});
+  buildMap();
+  if(focus){window.scrollTo(0,0);const f=$('#focus');if(f)f.focus({preventScroll:true});}
+}
+function go(d){
+  if(mode==='step'){idx=Math.min(Math.max(0,idx+d),flat.length-1);}
+  else{const ci=Math.min(Math.max(0,flat[idx].ci+d),CH.length-1);idx=flat.findIndex(f=>f.ci===ci);}
+  render(true);
+}
+$('#next').onclick=()=>go(1); $('#back').onclick=()=>go(-1);
+$('#modebtn').onclick=()=>{mode=mode==='step'?'chapter':'step';save('mode',mode);if(mode==='chapter'){idx=flat.findIndex(f=>f.ci===flat[idx].ci);}render(true)};
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape')closeMap();
+  const tag=(e.target.tagName||'').toLowerCase();
+  if(tag==='input'||tag==='select'||tag==='textarea'||e.altKey||e.ctrlKey||e.metaKey)return;
+  if(document.body.classList.contains('open'))return;
+  if(e.key==='ArrowRight'){e.preventDefault();go(1)}
+  if(e.key==='ArrowLeft'){e.preventDefault();go(-1)}
+});
+
+/* ---------- map ---------- */
+function buildMap(){
+  const cur=flat[idx];
+  let h='';let k=0;
+  let lastPart='';
+  const PN={Start:'Start',"01":'File 01: Multithreading basics',"02":'File 02: What is a thread',Practice:'Practice'};
+  CH.forEach((c,ci)=>{
+    if(c.part!==lastPart){h+='<h3 class="parth">'+PN[c.part]+'</h3>';lastPart=c.part;}
+    const done=c.steps.every((_,si)=>seen.has(flat.findIndex(f=>f.ci===ci&&f.si===si)));
+    h+='<details'+(ci===cur.ci?' open':'')+'><summary>'+ci+'. '+c.t+(done?' ✓':'')+'</summary><ol>';
+    c.steps.forEach((s,si)=>{const g=k++;
+      h+='<li><button data-go="'+g+'" class="'+(ci===cur.ci&&(mode==='chapter'||si===cur.si)?'cur':'')+'"><span class="ck">'+(seen.has(g)?'✓':'')+'</span><span>'+(si+1)+'. '+s.t+'</span></button></li>';});
+    h+='</ol></details>';
+  });
+  $('#maplist').innerHTML=h;
+}
+$('#maplist').addEventListener('click',e=>{const b=e.target.closest('[data-go]');if(!b)return;idx=+b.dataset.go;if(mode==='chapter')mode='step',save('mode',mode);closeMap();render(true)});
+function openMap(){document.body.classList.add('open');$('#mapbtn').setAttribute('aria-expanded','true');$('#closemap').focus()}
+function closeMap(){if(!document.body.classList.contains('open'))return;document.body.classList.remove('open');$('#mapbtn').setAttribute('aria-expanded','false');$('#mapbtn').focus()}
+$('#mapbtn').onclick=openMap; $('#closemap').onclick=closeMap; $('#scrim').onclick=closeMap;
+$('#reset').onclick=()=>{seen=new Set();idx=0;save('seen',[]);save('idx',0);closeMap();render(true)};
+// the drawer lives outside body class target: move shell children under body for .open selector
+document.querySelectorAll('#shell > *').forEach(n=>document.body.appendChild(n));
+
+
+/* ---------- widget: Amdahl ---------- */
+const NS=[1,2,3,4,6,8,12,16,24,32,64,128,256,1024];
+function initAmdahl(el){
+  el.innerHTML=`<div class="wg am">
+   <div class="ctl">
+    <label>p = parallel fraction <b data-o="pv"></b><input type="range" min="0" max="100" value="90" data-k="p"></label>
+    <label>n = processors <b data-o="nv"></b><input type="range" min="0" max="${NS.length-1}" value="3" data-k="n"></label>
+   </div>
+   <div class="big"><span data-o="s"></span><small data-o="sub"></small></div>
+   <div class="tl"><div class="tlh">Time with 1 processor</div><div class="tbar" data-o="b1"></div></div>
+   <div class="tl"><div class="tlh" data-o="bnh"></div><div class="tbar" data-o="bn"></div></div>
+   <div class="legend"><span><i class="lg-s"></i>serial part (never shrinks)</span><span><i class="lg-p"></i>parallel part (split across n)</span></div>
+   <div class="curve" data-o="curve" aria-label="Speed-up for different n"></div>
+  </div>`;
+  const q=s=>el.querySelector(s);
+  function S(p,n){return 1/((1-p)+p/n)}
+  function draw(){
+    const p=+q('[data-k=p]').value/100, n=NS[+q('[data-k=n]').value], s=S(p,n), ceil=p>=1?Infinity:1/(1-p);
+    q('[data-o=pv]').textContent=p.toFixed(2)+' ('+Math.round(p*100)+' %)';
+    q('[data-o=nv]').textContent=n;
+    q('[data-o=s]').textContent=s.toFixed(2)+'× faster';
+    q('[data-o=sub]').textContent='Ceiling with infinite processors: '+(ceil===Infinity?'none (p = 1)':ceil.toFixed(1)+'×')+'. Efficiency: '+Math.round(s/n*100)+' % of the ideal '+n+'×.';
+    q('[data-o=b1]').innerHTML=seg(1-p,'s',100)+seg(p,'p',100);
+    const tn=(1-p)+p/n;
+    q('[data-o=bnh]').textContent='Time with '+n+' processor'+(n>1?'s':'')+' = '+Math.round(tn*100)+' % of the original';
+    q('[data-o=bn]').innerHTML=seg(1-p,'s',100)+seg(p/n,'p',100);
+    q('[data-o=curve]').innerHTML=[1,2,4,8,16,64,256,1024].map(k=>{const v=S(p,k),w=Math.max(2,v/Math.min(ceil===Infinity?1024:ceil,1024)*100);
+      return '<div class="cr"><span class="ck2">n = '+k+'</span><span class="cb"><i style="width:'+Math.min(100,w)+'%"></i></span><span class="cv">'+v.toFixed(2)+'×</span></div>'}).join('');
+  }
+  function seg(f,c,scale){return f<=0?'':'<i class="sg '+c+'" style="width:'+(f*scale)+'%"></i>'}
+  el.querySelectorAll('input').forEach(i=>i.addEventListener('input',draw));
+  draw();
+}
+
+/* ---------- widget: count++ race ---------- */
+function initRace(el){
+  el.innerHTML=`<div class="wg rc">
+   <div class="rcgrid">
+    <div class="th" data-t="A"><div class="thh">Thread A</div><ol class="ops"><li>tmp = count</li><li>tmp = tmp + 1</li><li>count = tmp</li></ol><div class="reg">tmp = <b data-o="rA">–</b></div><button data-a="A">Thread A: next step</button></div>
+    <div class="mem"><div class="thh">Shared heap</div><div class="cnt">count = <b data-o="count">0</b></div></div>
+    <div class="th" data-t="B"><div class="thh">Thread B</div><ol class="ops"><li>tmp = count</li><li>tmp = tmp + 1</li><li>count = tmp</li></ol><div class="reg">tmp = <b data-o="rB">–</b></div><button data-a="B">Thread B: next step</button></div>
+   </div>
+   <div class="act"><button data-a="bad" class="main">Play the bad order</button><button data-a="good">Play a lucky order</button><button data-a="reset">Reset</button></div>
+   <div class="verdict" data-o="v" role="status"></div>
+   <div class="simlog" data-o="log"></div>
+  </div>`;
+  const q=s=>el.querySelector(s);
+  let st, timer=null;
+  function reset(){clearTimeout(timer);timer=null;st={count:0,A:{pc:0,reg:null},B:{pc:0,reg:null},log:[]};draw()}
+  function step(t){
+    const T=st[t]; if(T.pc>2)return;
+    if(T.pc===0){T.reg=st.count;st.log.push(t+': read count → tmp = '+T.reg);}
+    else if(T.pc===1){T.reg=T.reg+1;st.log.push(t+': tmp + 1 → tmp = '+T.reg+' (only in '+t+'\u2019s own stack)');}
+    else {st.count=T.reg;st.log.push(t+': write count = '+T.reg);}
+    T.pc++; draw();
+  }
+  function draw(){
+    ['A','B'].forEach(t=>{const T=st[t];
+      el.querySelectorAll('[data-t='+t+'] .ops li').forEach((li,i)=>{li.className=i<T.pc?'done':(i===T.pc?'cur':'')});
+      q('[data-o=r'+t+']').textContent=T.reg===null?'–':T.reg;
+      q('[data-a='+t+']').disabled=T.pc>2||!!timer;});
+    q('[data-o=count]').textContent=st.count;
+    const lg=q('[data-o=log]'); lg.innerHTML=st.log.length?st.log.map(l=>'<div>'+esc(l)+'</div>').join(''):'<div>Press a button to start.</div>'; lg.scrollTop=lg.scrollHeight;
+    const done=st.A.pc>2&&st.B.pc>2;
+    q('[data-o=v]').innerHTML=!done?'Both threads run count++ once. Expected result: 2.':(st.count===2?'<span class="t">count = 2. Correct — this time. One thread finished before the other read.</span>':'<span class="r">count = '+st.count+'. One update was lost: both threads read the same old value.</span>');
+  }
+  function play(seq){reset();const next=()=>{if(!seq.length){timer=null;draw();return}step(seq.shift());timer=setTimeout(next,matchMedia('(prefers-reduced-motion: reduce)').matches?0:550);};timer=setTimeout(next,0);draw()}
+  q('[data-a=A]').onclick=()=>step('A'); q('[data-a=B]').onclick=()=>step('B');
+  q('[data-a=bad]').onclick=()=>play(['A','B','A','B','A','B']);
+  q('[data-a=good]').onclick=()=>play(['A','A','A','B','B','B']);
+  q('[data-a=reset]').onclick=reset;
+  reset();
+}
+
+/* ---------- widget: thread states ---------- */
+function initStates(el){
+  const ST=['NEW','RUNNABLE','BLOCKED','WAITING','TIMED_WAITING','TERMINATED'];
+  el.innerHTML=`<div class="wg sx">
+   <div class="stbox" data-o="boxes"></div>
+   <div class="now" data-o="now"></div>
+   <div class="acts" data-o="acts" role="group" aria-label="Actions"></div>
+   <div class="act"><button data-a="reset">Start over (new Thread)</button></div>
+   <div class="simlog" data-o="log" aria-live="polite"></div>
+  </div>`;
+  const q=s=>el.querySelector(s);
+  let s, via, flag, log;
+  const note=(msg)=>log.push(msg);
+  function actions(){
+    const A=[]; const go=(label,to,v,msg,extra)=>A.push({label,fn:()=>{const from=s;s=to;via=v;if(extra)extra();note(from+' → '+to+':  '+label+'. '+msg)}});
+    const err=(label,msg)=>A.push({label,err:true,fn:()=>note('✗ '+label+' in '+s+':  '+msg)});
+    if(s==='NEW'){go('start()','RUNNABLE',null,'The native OS thread is created now.');}
+    else if(s==='RUNNABLE'){
+      // a waiting call made while the interrupt flag is already set does not wait at all
+      const wt=(label,to,v,msg,kind)=>{ if(!flag) return go(label,to,v,msg);
+        A.push({label,fn:()=>{ if(kind==='park') note('RUNNABLE → RUNNABLE:  '+label+' with flag already true. Returns immediately, no exception; flag stays true.');
+          else {flag=false; note('RUNNABLE → RUNNABLE:  '+label+' with flag already true. Throws InterruptedException immediately; flag cleared. (Tested.)');} }}); };
+      wt('Thread.sleep(ms)','TIMED_WAITING','sleep','Sleeping with a deadline.');
+      wt('obj.wait()','WAITING','wait','Releases the monitor and waits for notify(). (Only inside synchronized(obj) — otherwise IllegalMonitorStateException.)');
+      wt('obj.wait(ms)','TIMED_WAITING','waitms','Releases the monitor; waits for notify() or the timeout. (Only inside synchronized(obj).)');
+      wt('other.join()','WAITING','join','Waits until the other thread is TERMINATED.');
+      wt('other.join(ms)','TIMED_WAITING','joinms','Waits for the other thread, with a deadline.');
+      wt('LockSupport.park()','WAITING','park','Waits for unpark() (or an interrupt).','park');
+      wt('LockSupport.parkNanos(n)','TIMED_WAITING','parkms','Waits for unpark() or the timeout.','park');
+      go('enter synchronized (another thread holds the lock)','BLOCKED','sync','Waiting to get the monitor.');
+      A.push({label:'interrupt()',fn:()=>{flag=true;note('RUNNABLE → RUNNABLE:  interrupt(). Only the flag is set (flag = true). A busy loop keeps running.')}});
+      A.push({label:'Thread.interrupted()',fn:()=>{const was=flag;flag=false;note('RUNNABLE → RUNNABLE:  Thread.interrupted() returned '+was+' and cleared the flag.')}});
+      go('run() returns or throws','TERMINATED',null,'Finished. No way back.');
+      err('start()','IllegalThreadStateException — a thread can only be started once.');
+    }
+    else if(s==='WAITING'){
+      if(via==='wait'){go('notify() / notifyAll() from another thread','BLOCKED','fromwait','Woken, but must re-take the monitor first.');
+        go('interrupt()','BLOCKED','fromwait-int','Must re-take the monitor, then wait() throws InterruptedException.');}
+      if(via==='join'){go('the other thread ends','RUNNABLE',null,'join() returns; its writes are now visible.');
+        go('interrupt()','RUNNABLE',null,'join() throws InterruptedException; flag cleared.',()=>flag=false);}
+      if(via==='park'){go('LockSupport.unpark(thread)','RUNNABLE',null,'park() returns.');
+        go('interrupt()','RUNNABLE',null,'park() returns with NO exception; flag stays true.',()=>flag=true);}
+    }
+    else if(s==='TIMED_WAITING'){
+      if(via==='sleep'){go('time runs out','RUNNABLE',null,'sleep() returns.');
+        go('interrupt()','RUNNABLE',null,'sleep() throws InterruptedException; flag cleared.',()=>flag=false);}
+      if(via==='waitms'){go('notify() or the timeout','BLOCKED','fromwait','Must re-take the monitor first.');
+        go('interrupt()','BLOCKED','fromwait-int','Must re-take the monitor, then wait(ms) throws InterruptedException.');}
+      if(via==='joinms'){go('other thread ends, or timeout','RUNNABLE',null,'join(ms) returns.');
+        go('interrupt()','RUNNABLE',null,'join(ms) throws InterruptedException; flag cleared.',()=>flag=false);}
+      if(via==='parkms'){go('unpark() or timeout','RUNNABLE',null,'parkNanos() returns.');
+        go('interrupt()','RUNNABLE',null,'parkNanos() returns, no exception; flag stays true.',()=>flag=true);}
+    }
+    else if(s==='BLOCKED'){
+      const extra=via==='fromwait-int'?' Then wait() throws InterruptedException; flag cleared.':(via==='fromwait'?' Then wait() returns.':'');
+      go('the other thread releases the lock','RUNNABLE',null,'Monitor acquired.'+extra,via==='fromwait-int'?()=>flag=false:null);
+      A.push({label:'interrupt()',fn:()=>{flag=true;note('BLOCKED → BLOCKED:  interrupt(). Still waiting for the lock; only the flag is set. (Tested.)')}});
+    }
+    else if(s==='TERMINATED'){err('start()','IllegalThreadStateException — TERMINATED is final.');
+      A.push({label:'interrupt()',fn:()=>note('TERMINATED → TERMINATED:  interrupt() is allowed. It sets the flag (tested: isInterrupted() = true), but nothing runs to react to it.')});}
+    return A;
+  }
+  function draw(){
+    q('[data-o=boxes]').innerHTML=ST.map(x=>'<span class="sb'+(x===s?' on':'')+'">'+x+'</span>').join('');
+    const why={sleep:'in sleep(ms)',waitms:'in wait(ms)',joinms:'in join(ms)',parkms:'in parkNanos()',wait:'in wait()',join:'in join()',park:'in park()',sync:'entering synchronized',fromwait:'woken from wait, re-taking the monitor','fromwait-int':'interrupted in wait, re-taking the monitor'};
+    q('[data-o=now]').innerHTML='Now: <b>'+s+'</b>'+(via&&why[via]?' <span class="muted">('+why[via]+')</span>':'')+'. Interrupt flag: <b>'+flag+'</b>';
+    const A=actions();
+    q('[data-o=acts]').innerHTML=A.length?A.map((a,i)=>'<button data-i="'+i+'" class="'+(a.err?'bad':'')+'">'+esc(a.label)+'</button>').join(''):'';
+    q('[data-o=acts]').querySelectorAll('button').forEach(b=>b.onclick=()=>{A[+b.dataset.i].fn();draw()});
+    const lg=q('[data-o=log]');lg.innerHTML=log.length?log.map(l=>'<div>'+esc(l)+'</div>').join(''):'<div>new Thread(...) → NEW. Press start().</div>';lg.scrollTop=lg.scrollHeight;
+  }
+  function reset(){s='NEW';via=null;flag=false;log=[];draw()}
+  q('[data-a=reset]').onclick=reset;
+  reset();
+}
+const WIDGETS={amdahl:initAmdahl,race:initRace,states:initStates};
+
+render(false);
+</script>
+</body>
+</html>

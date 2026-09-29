@@ -1,0 +1,1386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Java thread pools, one step at a time</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#EDF0F3; --surface:#FFFFFF; --code:#F3F5F8; --ink:#19212B; --muted:#566273; --line:#D3D9E1;
+  --accent:#3346C4; --accent-ink:#FFFFFF; --soft:#E6EAFA;
+  --thread:#0E7A6B; --thread-soft:#DDF1EE; --queue:#9A6208; --queue-soft:#F7EBD4; --reject:#B42318; --reject-soft:#FBE3E0;
+  --c-kw:#3346C4; --c-type:#0E6B5E; --c-str:#9A5A00; --c-com:#6B7686; --c-num:#A12A6B;
+  --sans:"Atkinson Hyperlegible", "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
+  --mono:"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#11161C; --surface:#182029; --code:#0F141A; --ink:#E3E8EE; --muted:#9AA6B4; --line:#2B3541;
+    --accent:#8FA0FF; --accent-ink:#0E1318; --soft:#1E2744;
+    --thread:#45C9B3; --thread-soft:#123430; --queue:#E5B24E; --queue-soft:#382A10; --reject:#F2877B; --reject-soft:#3D1B18;
+    --c-kw:#9CAAFF; --c-type:#5ED3BF; --c-str:#E8B75C; --c-com:#7F8B9A; --c-num:#F29AC8;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#11161C; --surface:#182029; --code:#0F141A; --ink:#E3E8EE; --muted:#9AA6B4; --line:#2B3541;
+  --accent:#8FA0FF; --accent-ink:#0E1318; --soft:#1E2744;
+  --thread:#45C9B3; --thread-soft:#123430; --queue:#E5B24E; --queue-soft:#382A10; --reject:#F2877B; --reject-soft:#3D1B18;
+  --c-kw:#9CAAFF; --c-type:#5ED3BF; --c-str:#E8B75C; --c-com:#7F8B9A; --c-num:#F29AC8;
+}
+*,*::before,*::after{box-sizing:inherit}
+html{scroll-padding-top:calc(env(safe-area-inset-top,0px) + 76px)}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:1.125rem;line-height:1.6;-webkit-text-size-adjust:100%}
+button{font:inherit;color:inherit}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px;border-radius:6px}
+
+/* top bar */
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--bg);border-bottom:1px solid var(--line)}
+.top-in{max-width:46rem;margin:0 auto;display:flex;align-items:center;gap:.75rem;padding:.6rem 1rem}
+.mapbtn{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:.35rem .8rem;cursor:pointer;font-weight:700}
+.where{flex:1;min-width:0}
+.where .ch{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:1rem}
+.where .pos{color:var(--muted);font-size:.875rem}
+.modebtn{border:0;background:none;color:var(--accent);cursor:pointer;font-size:.9rem;text-decoration:underline;text-underline-offset:3px;white-space:nowrap}
+.bar{height:4px;background:var(--line)}
+.bar i{display:block;height:100%;background:var(--thread);width:0;transition:width .25s}
+
+/* main */
+main{max-width:46rem;margin:0 auto;padding:1.5rem 1rem 8rem}
+.step{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:1.4rem 1.4rem 1.2rem;margin-bottom:1.5rem}
+.step h2{font-size:1.6rem;line-height:1.25;margin:0 0 1rem;letter-spacing:-.01em}
+.step h2:focus{outline:none}
+.snum{display:inline-block;min-width:2rem;color:var(--thread);font-weight:700}
+.step p{margin:.2rem 0 .8rem;max-width:40rem}
+.step ul,.step ol{margin:.2rem 0 .9rem;padding-left:1.4rem}
+.step li{margin:.3rem 0}
+.step li::marker{color:var(--muted)}
+code{font-family:var(--mono);font-size:.86em;background:var(--code);padding:.08em .32em;border-radius:5px}
+pre{margin:0}
+pre code{background:none;padding:0;font-size:.84rem;line-height:1.55;display:block;white-space:pre;tab-size:4}
+.codebox{background:var(--code);border:1px solid var(--line);border-radius:10px;padding:.85rem 1rem;overflow-x:auto;margin:.4rem 0 1rem}
+.out{border:1px dashed var(--muted);border-radius:10px;margin:.4rem 0 1rem;overflow:hidden}
+.out .lbl{font-size:.8rem;color:var(--muted);padding:.35rem 1rem 0}
+.out pre{padding:.3rem 1rem .8rem;overflow-x:auto}
+.tk{color:var(--c-kw);font-weight:600}.tt{color:var(--c-type)}.ts{color:var(--c-str)}.tc{color:var(--c-com);font-style:italic}.tn{color:var(--c-num)}
+.rem{background:var(--soft);border-left:4px solid var(--accent);border-radius:0 10px 10px 0;padding:.7rem 1rem;margin:1rem 0 .2rem;font-weight:700}
+.rem span{display:block;font-weight:400;font-size:.85rem;color:var(--muted);margin-bottom:.1rem}
+.quote{border-left:3px solid var(--line);padding:.1rem 0 .1rem .9rem;color:var(--muted);font-style:italic;margin:.4rem 0 .9rem}
+details.q{border:1px solid var(--line);border-radius:10px;margin:.6rem 0;background:var(--surface)}
+details.q summary{cursor:pointer;padding:.6rem 1rem;font-weight:700;list-style:none}
+details.q summary::-webkit-details-marker{display:none}
+details.q summary::after{content:"Show answer";float:right;font-weight:400;font-size:.85rem;color:var(--accent);margin-left:.6rem}
+details.q[open] summary::after{content:"Hide"}
+details.q.hint summary::after{content:"Show hint"}
+details.q.hint[open] summary::after{content:"Hide"}
+details.q .a{padding:0 1rem .8rem;border-top:1px solid var(--line)}
+details.q .a > *:first-child{margin-top:.7rem}
+.tbl{overflow-x:auto;margin:.4rem 0 1rem;border:1px solid var(--line);border-radius:10px}
+table{border-collapse:collapse;font-size:.92rem;min-width:100%}
+th,td{text-align:left;vertical-align:top;padding:.5rem .7rem;border-bottom:1px solid var(--line)}
+th{background:var(--code);font-weight:700;white-space:nowrap}
+tr:last-child td{border-bottom:0}
+td code{white-space:nowrap}
+kbd{font-family:var(--mono);font-size:.8em;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:.05em .4em;background:var(--code)}
+.t{color:var(--thread);font-weight:700}.qq{color:var(--queue);font-weight:700}.r{color:var(--reject);font-weight:700}
+
+/* bottom nav */
+.nav{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--bg);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom,0px)}
+.nav-in{max-width:46rem;margin:0 auto;display:flex;gap:.75rem;padding:.7rem 1rem;align-items:center}
+.nav button{border-radius:10px;padding:.7rem 1.2rem;cursor:pointer;font-weight:700;border:1px solid var(--line);background:var(--surface)}
+.nav .next{margin-left:auto;background:var(--accent);color:var(--accent-ink);border-color:var(--accent);min-width:8rem}
+.nav button:disabled{opacity:.4;cursor:default}
+.nav .hint{color:var(--muted);font-size:.85rem}
+@media (max-width:560px){.nav .hint{display:none}.step{padding:1.1rem 1rem}.step h2{font-size:1.35rem}}
+
+/* map drawer */
+.scrim{position:fixed;inset:0;background:rgba(10,14,20,.45);z-index:40;display:none}
+.drawer{position:fixed;top:0;bottom:0;left:0;width:min(24rem,92vw);background:var(--surface);z-index:41;transform:translateX(-102%);transition:transform .2s;overflow-y:auto;border-right:1px solid var(--line);padding:calc(env(safe-area-inset-top,0px) + 1rem) 1rem calc(env(safe-area-inset-bottom,0px) + 1rem)}
+.open .scrim{display:block}.open .drawer{transform:none}
+.drawer h2{margin:0 0 .6rem;font-size:1.2rem;display:flex;justify-content:space-between;align-items:center}
+.drawer h2 button{border:1px solid var(--line);background:none;border-radius:8px;padding:.2rem .6rem;cursor:pointer;font-size:.9rem}
+.drawer details{border-bottom:1px solid var(--line)}
+.drawer summary{cursor:pointer;padding:.55rem 0;font-weight:700;font-size:1rem}
+.drawer ol{list-style:none;margin:0 0 .6rem;padding:0}
+.drawer li button{display:flex;gap:.5rem;width:100%;text-align:left;border:0;background:none;padding:.3rem .4rem;border-radius:6px;cursor:pointer;font-size:.95rem;color:var(--muted)}
+.drawer li button:hover{background:var(--code)}
+.drawer li button.cur{background:var(--soft);color:var(--ink);font-weight:700}
+.drawer li button .ck{width:1rem;flex:none;color:var(--thread)}
+.drawer .reset{margin-top:1rem;border:0;background:none;color:var(--accent);text-decoration:underline;cursor:pointer;font-size:.9rem}
+
+/* simulator */
+.sim{border:2px solid var(--thread);border-radius:12px;padding:1rem;margin:.5rem 0 1rem}
+.sim .ctl{display:grid;grid-template-columns:repeat(auto-fit,minmax(9.5rem,1fr));gap:.6rem .8rem;margin-bottom:.8rem}
+.sim label{display:flex;flex-direction:column;font-size:.85rem;color:var(--muted);gap:.2rem}
+.sim input[type=number],.sim select{font:inherit;font-size:1rem;padding:.35rem .5rem;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)}
+.sim .chk{flex-direction:row;align-items:center;gap:.4rem}
+.sim .pre{display:flex;flex-wrap:wrap;gap:.4rem;margin-bottom:.8rem}
+.sim .pre button,.sim .act button,.rj .pols button{border:1px solid var(--line);background:var(--code);border-radius:999px;padding:.3rem .8rem;cursor:pointer;font-size:.88rem}
+.sim .act{display:flex;flex-wrap:wrap;gap:.5rem;margin:.6rem 0}
+.sim .act button.main{background:var(--thread);color:var(--surface);border-color:var(--thread);font-weight:700}
+.sim .code-line{font-family:var(--mono);font-size:.8rem;color:var(--muted);overflow-x:auto;white-space:nowrap;margin-bottom:.6rem}
+.lane{margin:.5rem 0}
+.lane .lh{font-size:.85rem;font-weight:700;margin-bottom:.25rem}
+.chips{display:flex;flex-wrap:wrap;gap:.3rem;min-height:1.9rem;align-items:center}
+.chip{font-family:var(--mono);font-size:.75rem;border-radius:6px;padding:.2rem .4rem;border:1.5px solid}
+.chip.th{border-color:var(--thread);background:var(--thread-soft);color:var(--thread)}
+.chip.qu{border-color:var(--queue);background:var(--queue-soft);color:var(--queue)}
+.chip.rj{border-color:var(--reject);background:var(--reject-soft);color:var(--reject)}
+.chip.empty{border-style:dashed;border-color:var(--line);background:none;color:var(--muted)}
+.more{font-size:.85rem;color:var(--muted)}
+.simlog{font-family:var(--mono);font-size:.78rem;background:var(--code);border-radius:8px;padding:.5rem .7rem;max-height:10rem;overflow:auto;margin-top:.6rem}
+.simlog div{white-space:nowrap}
+.simerr{color:var(--reject);font-weight:700;font-size:.95rem}
+.rj{border:2px solid var(--accent);border-radius:12px;padding:1rem;margin:.5rem 0 1rem}
+.rj .pols{display:flex;flex-wrap:wrap;gap:.4rem;margin-bottom:.8rem}
+.rj .pols button[aria-pressed=true],.sim .pre button.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.rj .row{display:flex;gap:.6rem;align-items:baseline;padding:.35rem 0;border-bottom:1px solid var(--line)}
+.rj .row:last-of-type{border-bottom:0}
+.rj .row b{font-family:var(--mono);font-size:.85rem;min-width:3.5rem}
+.rj .sum{margin-top:.6rem;font-weight:700}
+@media (prefers-reduced-motion: reduce){*{transition:none !important}}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="top-in">
+    <button class="mapbtn" id="mapbtn" aria-controls="drawer" aria-expanded="false">Map</button>
+    <div class="where"><div class="ch" id="chname"></div><div class="pos" id="pos"></div></div>
+    <button class="modebtn" id="modebtn"></button>
+  </div>
+  <div class="bar" aria-hidden="true"><i id="bar"></i></div>
+</header>
+
+<main id="main" aria-live="polite"></main>
+
+<nav class="nav" aria-label="Step navigation">
+  <div class="nav-in">
+    <button id="back">Back</button>
+    <span class="hint">Keys: <kbd>←</kbd> <kbd>→</kbd></span>
+    <button id="next" class="next">Next</button>
+  </div>
+</nav>
+
+<div id="shell">
+  <div class="scrim" id="scrim"></div>
+  <aside class="drawer" id="drawer" aria-label="Map of all steps">
+    <h2>Map <button id="closemap">Close</button></h2>
+    <div id="maplist"></div>
+    <button class="reset" id="reset">Clear my progress</button>
+  </aside>
+</div>
+
+<script>
+/* ---------- tiny builders ---------- */
+const P=h=>['p',h], C=(s,l)=>['code',s,l||'java'], O=s=>['out',s], R=h=>['rem',h], Q=(q,a)=>['q',q,a], W=n=>['w',n], Y=h=>['quote',h];
+const TB=h=>['p','<div class="tbl"><table>'+h+'</table></div>'];
+const S=(t,...x)=>({t,x});
+
+/* ---------- content ---------- */
+const CH=[
+{t:"Start here",steps:[
+S("How this page works",
+ P(`One idea per screen. Read it, then press <b>Next</b> (or the <kbd>→</kbd> key).`),
+ P(`<kbd>←</kbd> goes back. Your place is saved in this browser.`),
+ P(`<b>Map</b> (top left) shows every step. Use it to jump or to see how far you are.`),
+ P(`Low on focus? Read only the <b>Remember</b> box at the bottom of the screen first. Then the rest.`),
+ P(`Steps marked <b>★ Deeper</b> go further than the lecture: foundations for later topics. Fine to skip on a first pass.`),
+ R(`Small steps. You don't need to hold everything at once.`)),
+S("The whole topic in five ideas",
+ P(`Everything later is detail on one of these:`),
+ P(`<ol><li>A pool = <span class="t">worker threads</span> + a <span class="qq">queue</span> of tasks. In Java the main class is <code>ThreadPoolExecutor</code>.</li>
+ <li>A new task always follows one rule: core threads → queue → extra threads → <span class="r">reject</span>.</li>
+ <li>The ready-made pools (<code>Executors.newXxx()</code>) each hide a danger.</li>
+ <li>Too many tasks? A <b>rejection policy</b> decides. This is <b>backpressure</b>.</li>
+ <li>A task throws? Where the exception goes depends on <code>execute</code> vs <code>submit</code>.</li></ol>`),
+ R(`Pool = threads + queue + rules.`)),
+S("About your 03 file (your own pool)",
+ P(`You want to build your own pool yourself. Good — so this page does <b>not</b> give you the finished code from 03.`),
+ P(`The last chapter gives you the <b>building blocks</b> and a <b>build plan</b>. Hints are hidden until you open them.`),
+ R(`Chapters 1–15 = how Java's pools work. Chapter 16 = your toolbox for 03.`))
+]},
+
+{t:"Why pools exist",steps:[
+S("A thread is expensive",
+ P(`Creating a normal (platform) thread = a call into the operating system.`),
+ P(`The JVM also reserves memory for its stack: <b>1 MB</b> by default on 64-bit Linux (the <code>-Xss</code> setting). It's reserved address space; real memory is used as the stack grows.`),
+ P(`A small task can take nanoseconds. Its thread costs far more than the task.`),
+ R(`One new thread per task wastes time and memory.`)),
+S("A thread can't be restarted",
+ P(`When <code>run()</code> ends, the thread is <code>TERMINATED</code>. That state is final.`),
+ C(String.raw`Thread t = new Thread(() -> System.out.println("hi"));
+t.start();
+t.join();      // t is now TERMINATED
+t.start();     // throws IllegalThreadStateException`),
+ R(`You can't reuse a finished thread.`)),
+S("But one thread can run many tasks",
+ P(`<code>start()</code> = create a new thread and run the code there.`),
+ P(`<code>run()</code> = a normal method call. It runs on the <b>current</b> thread.`),
+ P(`So one thread can call <code>run()</code> on many tasks, one after another:`),
+ C(String.raw`Runnable a = () -> System.out.println("task A");
+Runnable b = () -> System.out.println("task B");
+
+Thread worker = new Thread(() -> {
+    a.run();   // runs on "worker"
+    b.run();   // also runs on "worker"
+});
+worker.start();`),
+ R(`Keep the thread alive, feed it tasks, call run(). That's the heart of every pool.`)),
+S("So what is a pool?",
+ P(`<ul><li>A set of long-lived <span class="t">worker threads</span>.</li>
+ <li>A <span class="qq">queue</span> of tasks that wait.</li>
+ <li>Each worker: take a task → <code>run()</code> it → take the next.</li></ul>`),
+ P(`Submitting a task is cheap: it's just putting it into the queue. The expensive thread creation happened once.`),
+ R(`Pool = long-lived threads + a queue of tasks.`)),
+S("What else a pool gives you",
+ P(`One place to control:`),
+ P(`<ul><li>how many tasks run at once</li><li>how big the waiting queue is</li><li>what happens on overload</li><li>thread names</li><li>exception handling</li><li>metrics</li><li>clean shutdown</li></ul>`),
+ Y(`"If you write thread.start() in your code, you are doing something wrong. Use an executor." — the lecturer`),
+ R(`In real code: no new Thread().start(). Use an executor.`))
+]},
+
+{t:"The type family",steps:[
+S("Executor — the smallest one",
+ C(String.raw`public interface Executor {
+    void execute(Runnable command);
+}`),
+ P(`Meaning: "run this somewhere, sometime."`),
+ P(`No result. No way to stop it. That's all.`),
+ R(`Executor = only execute(Runnable).`)),
+S("ExecutorService — the one you'll use",
+ P(`It extends <code>Executor</code> and adds:`),
+ P(`<ul><li><code>submit(Runnable | Callable)</code> → returns a <code>Future</code> (result or exception later)</li>
+ <li><code>invokeAll</code>, <code>invokeAny</code> — run a list of tasks</li>
+ <li><code>shutdown()</code>, <code>shutdownNow()</code>, <code>awaitTermination()</code></li>
+ <li><code>isShutdown()</code>, <code>isTerminated()</code></li>
+ <li><code>close()</code> — since JDK 19, so it works in try-with-resources</li></ul>`),
+ R(`ExecutorService = execute + submit + lifecycle.`)),
+S("ScheduledExecutorService — for time",
+ P(`Adds three methods:`),
+ P(`<ul><li><code>schedule(task, delay, unit)</code> — run once, later</li>
+ <li><code>scheduleAtFixedRate(...)</code> — repeat on a fixed rhythm</li>
+ <li><code>scheduleWithFixedDelay(...)</code> — repeat with a pause after each run</li></ul>`),
+ R(`Scheduled = delays and repeats.`)),
+S("The real classes",
+ C(String.raw`Executor
+  └─ ExecutorService
+     ├─ ScheduledExecutorService
+     └─ AbstractExecutorService
+          ├─ ThreadPoolExecutor            <- THE class
+          │    └─ ScheduledThreadPoolExecutor   (also implements ScheduledExecutorService)
+          └─ ForkJoinPool                  <- work-stealing
+
+Executors   <- not a pool: a class full of static factory methods`,'text'),
+ P(`<code>ThreadPoolExecutor</code>: the fixed, cached and single-thread pools are all built from it. You build custom pools from it too.`),
+ Y(`"When you open newCachedThreadPool you see the class is ThreadPoolExecutor. It's the general class on which you can build your own pools. If you want a custom one — that's how." — the lecturer`),
+ P(`<code>ForkJoinPool</code>: its shared <code>ForkJoinPool.commonPool()</code> runs parallel streams and <code>CompletableFuture</code>'s async methods by default. A separate ForkJoinPool provides the carrier threads under virtual threads.`),
+ R(`Almost every pool you meet is a ThreadPoolExecutor with different settings.`)),
+S("Write your code against the interface",
+ C(String.raw`ExecutorService pool = Executors.newFixedThreadPool(4);   // good
+
+// Use the class type only when you need its extra methods
+// (getQueue(), getActiveCount(), setCorePoolSize(...), ...)`),
+ P(`Only need <code>execute</code>? Then the type <code>Executor</code> is enough.`),
+ R(`Variable type = ExecutorService (or Executor).`))
+]},
+
+{t:"ThreadPoolExecutor: 7 parameters",steps:[
+S("The full constructor",
+ C(String.raw`new ThreadPoolExecutor(
+        int corePoolSize,                  // 1
+        int maximumPoolSize,               // 2
+        long keepAliveTime, TimeUnit unit, // 3 + 4
+        BlockingQueue<Runnable> workQueue, // 5
+        ThreadFactory threadFactory,       // 6  (optional)
+        RejectedExecutionHandler handler); // 7  (optional)`),
+ P(`Next screens: one parameter group per screen.`),
+ R(`Seven parameters. Two are optional.`)),
+S("1–2: corePoolSize and maximumPoolSize",
+ P(`<b>corePoolSize</b> — threads the pool keeps alive, even when they have nothing to do.`),
+ P(`<b>maximumPoolSize</b> — the upper limit of threads.`),
+ P(`Threads between core and max are <b>extra</b> threads. They exist only under pressure.`),
+ P(`Threads are created lazily: when tasks arrive, not in the constructor.`),
+ R(`core = normal size. max = size under pressure.`)),
+S("3–4: keepAliveTime + unit",
+ P(`How long an <b>extra</b> thread (above core) may sit idle before it dies.`),
+ P(`<code>allowCoreThreadTimeOut(true)</code> lets core threads die too. It needs keepAlive > 0, otherwise it throws <code>IllegalArgumentException</code>.`),
+ P(`If core == max there are no extra threads, so the value doesn't matter. The lecturer wrote <code>0</code> for his (10, 10) pool.`),
+ R(`keepAlive only affects threads above core.`)),
+S("5: workQueue",
+ P(`The place where tasks <b>wait</b> when all core threads are busy.`),
+ P(`Its type and capacity decide how the whole pool behaves. Chapter 5 is all about it.`),
+ R(`The queue choice matters more than it looks.`)),
+S("6: threadFactory",
+ P(`How the pool creates its threads. You can set:`),
+ P(`<ul><li>the thread <b>name</b> (shows in logs, thread dumps, profilers)</li><li>daemon or not</li><li>an <code>UncaughtExceptionHandler</code></li></ul>`),
+ P(`Default: <code>Executors.defaultThreadFactory()</code> → names like <code>pool-1-thread-1</code>, non-daemon.`),
+ R(`ThreadFactory = names + exception handler for your threads.`)),
+S("7: handler (RejectedExecutionHandler)",
+ P(`What to do when the queue is full <b>and</b> the pool is at max.`),
+ P(`Default: <code>AbortPolicy</code> → throws <code>RejectedExecutionException</code>.`),
+ P(`Chapter 8 covers all policies.`),
+ R(`handler = the plan for "we are full".`)),
+S("Two small extras + the constructor's checks",
+ P(`<code>prestartAllCoreThreads()</code> creates all core threads now, instead of waiting for tasks.`),
+ P(`The constructor refuses bad values with <code>IllegalArgumentException</code>: core &lt; 0, max ≤ 0, max &lt; core, keepAlive &lt; 0.`),
+ P(`A null queue, factory or handler → <code>NullPointerException</code>.`),
+ R(`max must be ≥ core and > 0.`)),
+S("A sentence to remember the order",
+ Y(`"The first two numbers: how many by default, and how far it may grow; then how long the extra ones live; then the queue; then the policy." — the lecturer`),
+ R(`How many → how far → how long → where they wait → who makes threads → what if full.`))
+]},
+
+{t:"The rule: where a new task goes",steps:[
+S("Four checks, always in this order",
+ P(`When you call <code>execute(task)</code>:`),
+ P(`<ol><li>Fewer than <b>core</b> threads? → create a <span class="t">new thread</span>. It runs this task.</li>
+ <li>Otherwise: does the <span class="qq">queue</span> accept it (<code>queue.offer(task)</code>)? → the task waits there.</li>
+ <li>Queue full: fewer than <b>max</b> threads? → create a <span class="t">new thread</span>. It runs this task.</li>
+ <li>Otherwise → <span class="r">reject</span> (the handler is called).</li></ol>`),
+ R(`core → queue → max → reject. Most people get this order wrong.`)),
+S("Surprise 1: a new thread even if others are idle",
+ P(`While the pool has fewer than <b>core</b> threads, each new task gets a <b>new</b> thread.`),
+ P(`Even if an existing worker is sitting idle.`),
+ P(`The pool fills up to core size first.`),
+ R(`Below core: always a new thread.`)),
+S("Surprise 2: extra threads only when the queue is FULL",
+ P(`Setup: core = 2, max = 4, queue capacity = 2. Six long tasks arrive at once.`),
+ P(`<ol><li>task 1 → 0 threads &lt; core 2 → <span class="t">new thread T1</span></li>
+ <li>task 2 → 1 &lt; 2 → <span class="t">new thread T2</span></li>
+ <li>task 3 → core is full → <span class="qq">queue (1/2)</span></li>
+ <li>task 4 → <span class="qq">queue (2/2)</span></li>
+ <li>task 5 → queue full, 2 &lt; max 4 → <span class="t">new thread T3</span></li>
+ <li>task 6 → queue full, 3 &lt; 4 → <span class="t">new thread T4</span></li></ol>`),
+ O(`core=2 max=4 queue=2, 6 tasks -> live threads=4 queued=2`),
+ P(`Notice: tasks 5 and 6 start <b>before</b> tasks 3 and 4. A pool doesn't promise start order.`),
+ R(`Threads grow only AFTER the queue is full.`)),
+S("Surprise 3: unbounded queue → max is ignored",
+ C(String.raw`new ThreadPoolExecutor(2, 100, 60, TimeUnit.SECONDS,
+                       new LinkedBlockingQueue<>());   // no capacity = unbounded`),
+ P(`The queue is never full. So step 3 of the rule never happens.`),
+ P(`This "2 to 100" pool is really a <b>2-thread pool with an endless backlog</b>.`),
+ O(`core=2 max=100 unbounded queue, 50 tasks -> live threads=2 queued=48`),
+ R(`Unbounded queue + max > core = the most common misconfiguration.`)),
+S("Queue capacity 0 → the pool grows at once",
+ P(`A <code>SynchronousQueue</code> stores nothing.`),
+ P(`<code>offer</code> succeeds only if an idle worker is waiting <b>right now</b>. Otherwise it fails.`),
+ P(`Fail → step 3 of the rule → a new thread.`),
+ P(`This is exactly how <code>newCachedThreadPool()</code> works (chapter 6).`),
+ R(`SynchronousQueue = hand the task straight to a thread.`)),
+S("When everything is full",
+ P(`Setup: core = 2, max = 2, queue = 3. Ten long tasks at once.`),
+ P(`<ul><li>2 tasks run (2 threads)</li><li>3 tasks wait in the queue</li><li>the other 5 are rejected</li></ul>`),
+ O(`core=2 max=2 queue=3, 10 tasks -> accepted=5 rejected=5`),
+ R(`accepted = max threads + queue capacity (when tasks are long).`)),
+S("Special case: core = 0",
+ P(`What if core is 0 and the queue accepts the task? By the four checks, no thread would ever start, and the task would wait forever.`),
+ P(`So the real code has one more check: after putting a task in the queue, if the pool has <b>0 threads</b>, it starts <b>one</b> thread.`),
+ C(String.raw`new ThreadPoolExecutor(0, 10, 60, TimeUnit.SECONDS,
+                       new LinkedBlockingQueue<>());   // 5 long tasks`),
+ O(`core=0 max=10 LinkedBlockingQueue, 5 tasks -> threads=1 (all tasks go through the queue)`),
+ P(`Because the queue is unbounded, it never grows past that one thread. A "0 to 10" pool that is really a 1-thread pool.`),
+ R(`core = 0 + a queue = one thread, not zero.`)),
+S("Try it yourself",
+ P(`Change the numbers. Press <b>Submit 1 task</b> and watch which check fires. Tasks here never finish, like long tasks.`),
+ W('sim'),
+ R(`Try the "2 / 100 / unbounded" preset and watch max never matter.`)),
+S("Check yourself",
+ Q(`core = 1, max = 5, ArrayBlockingQueue(10). 12 long tasks. How many threads?`,
+   `<p><b>2 threads, 10 queued, 0 rejected.</b></p><p>Task 1 → new thread. Tasks 2–11 fill the queue (10). Task 12 → queue full, 1 &lt; 5 → second thread.</p><p>(Checked with a real JDK 21 run.)</p>`),
+ Q(`new ThreadPoolExecutor(4, 50, 30, SECONDS, new LinkedBlockingQueue&lt;&gt;()). Most threads ever?`,
+   `<p><b>4.</b> The queue is unbounded, so it's never full, so the pool never grows past core.</p>`),
+ R(`If you got both, you understand the most important rule of this topic.`))
+]},
+
+{t:"Choosing the queue",steps:[
+S("LinkedBlockingQueue() — no capacity given",
+ P(`Capacity = <code>Integer.MAX_VALUE</code> = 2,147,483,647 (about 2 billion).`),
+ P(`It never fills → max is ignored → overload just piles up in memory.`),
+ P(`Used by <code>newFixedThreadPool</code> and <code>newSingleThreadExecutor</code>.`),
+ Y(`"We'll hardly ever get 2 billion tasks — only if something is really wrong. So the abort policy is there, but you'll practically never see it."`),
+ R(`No capacity = effectively unbounded.`)),
+S("Bounded: LinkedBlockingQueue(n) / ArrayBlockingQueue(n)",
+ P(`Capacity n. When full, the pool grows to max, then rejects.`),
+ P(`That's <b>real backpressure</b>.`),
+ P(`<code>ArrayBlockingQueue</code>: one fixed array, FIFO (first in, first out), one lock, optional fairness flag.`),
+ P(`<code>LinkedBlockingQueue</code>: linked nodes, separate locks for putting and taking.`),
+ R(`Bounded queue = the pool can say "no".`)),
+S("SynchronousQueue — capacity 0",
+ P(`A "fake queue": nothing is stored.`),
+ P(`A task goes straight to a free thread, or a new thread is created.`),
+ P(`Used by <code>newCachedThreadPool</code>.`),
+ R(`SynchronousQueue = hand-off, no waiting room.`)),
+S("PriorityBlockingQueue — ordered by priority",
+ P(`Unbounded. Tasks come out by <code>Comparable</code> / <code>Comparator</code> order, not FIFO.`),
+ P(`Gotcha: <code>submit()</code> wraps your task in a <code>FutureTask</code>, which is not <code>Comparable</code>. With natural ordering you get a <code>ClassCastException</code>. Fix: use <code>execute()</code> with tasks that implement <code>Comparable</code>, or override <code>newTaskFor</code> so the wrapper is Comparable too.`),
+ R(`Priority queue = order by importance, and it's unbounded.`)),
+S("DelayQueue — available after a delay",
+ P(`Elements come out only when their delay has passed.`),
+ P(`<code>ScheduledThreadPoolExecutor</code> uses its own similar queue: <code>DelayedWorkQueue</code>.`),
+ R(`Delay queues power scheduled pools.`)),
+S("The queues side by side",
+ TB(`<tr><th>Queue</th><th>Capacity</th><th>Effect on the pool</th></tr>
+ <tr><td><code>LinkedBlockingQueue&lt;&gt;()</code></td><td>≈ 2 billion</td><td>never fills → max ignored → overload buffered in memory</td></tr>
+ <tr><td><code>LinkedBlockingQueue&lt;&gt;(n)</code>, <code>ArrayBlockingQueue&lt;&gt;(n)</code></td><td>n</td><td>real backpressure</td></tr>
+ <tr><td><code>SynchronousQueue&lt;&gt;()</code></td><td>0</td><td>hand-off; grows immediately (cached pool)</td></tr>
+ <tr><td><code>PriorityBlockingQueue&lt;&gt;()</code></td><td>unbounded</td><td>ordered by priority, not FIFO</td></tr>
+ <tr><td><code>DelayQueue</code></td><td>unbounded</td><td>elements available after a delay</td></tr>`),
+ R(`For a real service: a bounded queue.`))
+]},
+
+{t:"Ready-made pools (Executors)",steps:[
+S("newFixedThreadPool(n) — what's inside",
+ C(String.raw`return new ThreadPoolExecutor(n, n, 0L, TimeUnit.MILLISECONDS,
+                              new LinkedBlockingQueue<Runnable>());`),
+ P(`<ul><li>n threads, created as the first n tasks arrive, then kept forever.</li>
+ <li>Unbounded queue → it accepts everything.</li></ul>`),
+ R(`Fixed = n threads + endless queue.`)),
+S("Fixed: when to use, what to watch",
+ P(`<b>Good for:</b> CPU-heavy work sized to the cores. Or a hard cap on parallelism (e.g. at most 8 connections to an old system).`),
+ P(`<b>Danger:</b> overload = growing memory + growing waiting time. The queue only fills at ~2 billion tasks, so in practice you get no rejection — you get <code>OutOfMemoryError</code> first.`),
+ Y(`"CPU-heavy → number of processors; IO-heavy → many, and virtual threads are probably your answer."`),
+ R(`Fixed pool's danger: the unbounded queue.`)),
+S("newCachedThreadPool() — what's inside",
+ C(String.raw`return new ThreadPoolExecutor(0, Integer.MAX_VALUE, 60L, TimeUnit.SECONDS,
+                              new SynchronousQueue<Runnable>());`),
+ P(`(In the recording he once says the threads die after "10 seconds". The real keep-alive is 60 s, as the source above shows.)`),
+ P(`<ul><li>Starts with 0 threads.</li>
+ <li>A task that finds no idle thread gets a <b>new</b> thread.</li>
+ <li>Idle threads die after <b>60 seconds</b>.</li></ul>`),
+ R(`Cached = no queue, no thread limit, 60 s idle timeout.`)),
+S("Cached: the 50-task test",
+ C(String.raw`ExecutorService cached = Executors.newCachedThreadPool();
+Set<String> names = ConcurrentHashMap.newKeySet();
+for (int i = 0; i < 50; i++) {
+    cached.submit(() -> {
+        names.add(Thread.currentThread().getName());
+        Thread.sleep(50);
+        return null;
+    });
+}
+cached.shutdown();
+cached.awaitTermination(5, TimeUnit.SECONDS);
+System.out.println(names.size());`),
+ O(`50`),
+ P(`All 50 tasks came faster than any finished. So: 50 different threads.`),
+ R(`Cached pool under a burst = one thread per task.`)),
+S("Cached: when to use",
+ P(`<b>Spiky</b> load of many <b>short</b> tasks.`),
+ Y(`"In the evening you get a peak of 100 requests. Instead of holding 100 threads all day, the cached pool spins 100 up when they come and lets them die 60 s later."`),
+ P(`A student asked: "but how does it know the peak is coming?" It doesn't need to. Threads appear <b>on demand</b> when tasks arrive, and disappear when idle.`),
+ R(`Cached = elastic for short bursts.`)),
+S("Cached: the danger",
+ P(`There is <b>no upper limit</b> on threads.`),
+ Y(`"If you submit too many, you get unpredictable behaviour."`),
+ P(`10,000 slow tasks at once = 10,000 threads → out of memory, or the OS scheduler collapses.`),
+ P(`Never use it for long or blocking tasks with unlimited arrival rate. For that → virtual threads.`),
+ R(`Cached pool's danger: unlimited threads.`)),
+S("newSingleThreadExecutor() — what's inside",
+ C(String.raw`return new AutoShutdownDelegatedExecutorService(
+        new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
+                               new LinkedBlockingQueue<Runnable>()));`),
+ P(`<ul><li>One worker + unbounded FIFO queue.</li>
+ <li>Tasks run <b>one after another, in submit order</b>.</li>
+ <li>If the worker dies from an exception, it's <b>replaced</b>. A plain <code>new Thread</code> would just be gone.</li></ul>`),
+ P(`(That's the JDK 21 source.) The wrapper hides the <code>ThreadPoolExecutor</code> methods, so nobody can cast it and resize it later. <code>newFixedThreadPool(1)</code> doesn't give you that guarantee.`),
+ R(`Single = strict order, one at a time.`)),
+S("Single: when to use",
+ Y(`"Even for a single thread, don't create new Thread. Use newSingleThreadExecutor — when you need a guarantee that things run strictly one after another, e.g. code that is not thread-safe."`),
+ P(`Typical uses:`),
+ P(`<ul><li>ordered writes to one file or socket</li><li>one owner of some mutable state ("actor" style)</li><li>event loops</li></ul>`),
+ P(`Danger: throughput of one thread + unbounded queue.`),
+ R(`Non-thread-safe code? Run it all on one single-thread executor.`)),
+S("newScheduledThreadPool(n) — timers",
+ C(String.raw`ScheduledExecutorService timer = Executors.newScheduledThreadPool(1);
+
+timer.schedule(() -> System.out.println("once, after 2 s"), 2, TimeUnit.SECONDS);
+timer.scheduleAtFixedRate(() -> healthCheck(), 0, 10, TimeUnit.SECONDS);
+timer.scheduleWithFixedDelay(() -> cleanup(), 0, 10, TimeUnit.SECONDS);`),
+ P(`Inside: <code>ScheduledThreadPoolExecutor(n)</code>. Max is <code>Integer.MAX_VALUE</code>, but its delay queue is unbounded, so it's effectively n threads.`),
+ R(`Scheduled pool = run later, or repeat.`)),
+S("Fixed rate vs fixed delay",
+ P(`<b>scheduleAtFixedRate</b>: starts are planned at 0, 10, 20, 30 s… If one run takes longer than the period, the next starts late — never at the same time.`),
+ P(`<b>scheduleWithFixedDelay</b>: waits 10 s <b>after each run ends</b>, then starts the next.`),
+ R(`Rate = rhythm of starts. Delay = pause between runs.`)),
+S("Scheduled: the silent trap",
+ P(`If a repeating task <b>throws</b>, all future runs are cancelled. Silently. No more runs, ever.`),
+ C(String.raw`timer.scheduleAtFixedRate(() -> {
+    try {
+        healthCheck();
+    } catch (Exception e) {            // without this: one throw = schedule dead
+        System.err.println("health check failed: " + e);
+    }
+}, 0, 10, TimeUnit.SECONDS);`),
+ P(`Test without the try/catch (task throws on its 2nd run, period 20 ms, then wait 300 ms):`),
+ O(`runs = 2, future.isDone() = true     <- stopped forever, nothing printed`),
+ R(`Repeating task? Always try/catch inside it.`)),
+S("newVirtualThreadPerTaskExecutor() — JDK 21",
+ P(`Not a <code>ThreadPoolExecutor</code> at all. Every task gets a <b>new virtual thread</b>. No pool, no queue, no limit.`),
+ C(String.raw`try (ExecutorService ex = Executors.newVirtualThreadPerTaskExecutor()) {
+    for (int i = 0; i < 100_000; i++) {
+        ex.submit(() -> {
+            Thread.sleep(1000);   // blocking is fine: the virtual thread unmounts
+            return null;
+        });
+    }
+}   // close() = shutdown() + wait for all tasks`),
+ P(`Underneath: a <code>ForkJoinPool</code> of carrier threads sized to the cores. A blocked virtual thread leaves its carrier free.`),
+ Y(`"You can throw a million Runnables at it and nothing bad happens."`),
+ R(`Virtual = one cheap thread per task, great for waiting (IO).`)),
+S("Virtual: when yes, when no",
+ P(`<b>Yes:</b> IO-bound tasks, any number (HTTP calls, DB calls, files).`),
+ P(`<b>No gain:</b> CPU-heavy work (the cores are the limit anyway), hot loops, tasks that need a specific thread.`),
+ P(`Before JDK 24, blocking inside <code>synchronized</code> "pins" the virtual thread to its carrier, so the carrier can't be reused. JDK 24 (JEP 491) fixed that for <code>synchronized</code>. A few rare cases still pin (e.g. blocking inside native code).`),
+ P(`No queue = no backpressure. Limit it yourself with a <code>Semaphore</code>:`),
+ C(String.raw`Semaphore limit = new Semaphore(100);          // at most 100 calls at once
+try (var ex = Executors.newVirtualThreadPerTaskExecutor()) {
+    for (String url : urls) {
+        ex.submit(() -> {
+            limit.acquire();
+            try { return callService(url); }
+            finally { limit.release(); }
+        });
+    }
+}`),
+ R(`Virtual threads: for IO, and add your own limit.`)),
+S("newWorkStealingPool() — ForkJoinPool",
+ P(`Each worker has its own task deque. An idle worker <b>steals</b> tasks from a busy one.`),
+ P(`Parallelism = number of cores by default. Good for many small CPU tasks, e.g. divide-and-conquer. (It's the same kind of pool as the common pool behind <code>parallelStream</code>.)`),
+ P(`Its threads are <b>daemon</b> → the JVM won't wait for them:`),
+ C(String.raw`public static void main(String[] args) {
+    ExecutorService ws = Executors.newWorkStealingPool();
+    ws.submit(() -> { Thread.sleep(1000); System.out.println("done?"); return null; });
+}   // main ends -> JVM exits -> "done?" is never printed`),
+ R(`Work-stealing = recursive CPU work. Daemon threads.`)),
+S("All ready-made pools in one table",
+ TB(`<tr><th>Factory</th><th>core</th><th>max</th><th>keepAlive</th><th>queue</th><th>Good for</th><th>Watch out</th></tr>
+ <tr><td><code>newFixedThreadPool(n)</code></td><td>n</td><td>n</td><td>–</td><td>unbounded LBQ</td><td>CPU work, hard cap</td><td>endless backlog, no rejection</td></tr>
+ <tr><td><code>newCachedThreadPool()</code></td><td>0</td><td>∞</td><td>60 s</td><td>SynchronousQueue</td><td>bursts of short tasks</td><td>unlimited threads</td></tr>
+ <tr><td><code>newSingleThreadExecutor()</code></td><td>1</td><td>1</td><td>–</td><td>unbounded LBQ</td><td>strict order, non-thread-safe code</td><td>endless backlog</td></tr>
+ <tr><td><code>newScheduledThreadPool(n)</code></td><td>n</td><td>∞ (really n)</td><td>–</td><td>delay queue</td><td>timers, repeats</td><td>exception cancels the schedule</td></tr>
+ <tr><td><code>newVirtualThreadPerTaskExecutor()</code></td><td>–</td><td>–</td><td>–</td><td>none</td><td>IO at any scale</td><td>no CPU gain, no backpressure</td></tr>
+ <tr><td><code>newWorkStealingPool()</code></td><td>parallelism = cores</td><td>–</td><td>–</td><td>per-worker deques</td><td>recursive CPU tasks</td><td>daemon threads</td></tr>
+ <tr><td><code>new ThreadPoolExecutor(...)</code></td><td>you</td><td>you</td><td>you</td><td>you</td><td>production services</td><td>you must think</td></tr>`),
+ R(`Each shortcut has one hidden danger. Know it.`)),
+S("The lecturer's verdict",
+ Y(`"The standard pools accept as many tasks as you want; their abort policy is there but practically never fires. If you design a real service, build your own ThreadPoolExecutor with a bounded queue."`),
+ P(`Shortcuts are fine for scripts, tests, and CPU pools sized to cores.`),
+ R(`Real service = your own ThreadPoolExecutor + bounded queue.`))
+]},
+
+{t:"Build a thought-through pool",steps:[
+S("Fixed size, bounded queue",
+ Y(`"Let's write our own fixed-size pool — but a thought-through one: limited not by 2 billion but by, say, a thousand."`),
+ C(String.raw`ExecutorService fixedBounded = new ThreadPoolExecutor(
+        10, 10,                                   // core = max = 10: no growth
+        0, TimeUnit.SECONDS,                      // no extra threads, so 0 is fine
+        new ArrayBlockingQueue<>(1000),           // at most 1000 waiting tasks
+        new ThreadPoolExecutor.AbortPolicy());    // full -> throw`),
+ R(`Same as newFixedThreadPool(10), but it can say "no".`)),
+S("Dynamic: between fixed and cached",
+ C(String.raw`ExecutorService dynamic = new ThreadPoolExecutor(
+        10, 20,                                   // 10 always, up to 20 under pressure
+        30, TimeUnit.SECONDS,                     // extras die after 30 s idle
+        new ArrayBlockingQueue<>(1000),
+        new ThreadPoolExecutor.CallerRunsPolicy());`),
+ P(`Trap (chapter 4): threads 11–20 appear only <b>after</b> 1000 tasks are already waiting.`),
+ R(`With a big queue, "max" arrives very late.`)),
+S("Want \"grow first, queue later\"?",
+ P(`The rule is queue first. To grow earlier:`),
+ P(`<ul><li>use a <b>small</b> queue, or</li>
+ <li>a <code>SynchronousQueue</code> + a bounded max (like cached, but with a limit), or</li>
+ <li>a custom queue whose <code>offer()</code> returns false while threads &lt; max — it "lies" to the executor. Tomcat does this.</li></ul>`),
+ R(`To grow before queueing, make offer() fail.`)),
+S("Name your threads: ThreadFactory",
+ C(String.raw`AtomicInteger counter = new AtomicInteger();
+ThreadFactory factory = r -> {
+    Thread t = new Thread(r, "order-worker-" + counter.incrementAndGet());
+    t.setDaemon(false);
+    t.setUncaughtExceptionHandler((th, e) ->
+            System.err.println("uncaught in " + th.getName() + ": " + e));
+    return t;
+};`),
+ P(`JDK 21 builder, same idea:`),
+ C(String.raw`ThreadFactory f = Thread.ofPlatform()
+        .name("order-worker-", 1)          // order-worker-1, -2, ...
+        .uncaughtExceptionHandler(handler)
+        .factory();`),
+ P(`Pass it as the 6th constructor argument.`),
+ R(`Named threads make logs and thread dumps readable.`))
+]},
+
+{t:"When it's full: rejection policies",steps:[
+S("The test setup",
+ P(`Pool: 1 thread, queue of 1. Submit 3 tasks at once.`),
+ P(`<ul><li>task0 → the <span class="t">thread</span> runs it</li><li>task1 → waits in the <span class="qq">queue</span></li><li>task2 → pool full, queue full → <span class="r">the handler decides</span></li></ul>`),
+ P(`Next screens: what each of the 4 policies does with task2.`),
+ R(`The handler runs only when threads = max AND queue is full.`)),
+S("AbortPolicy (the default)",
+ P(`Throws <code>RejectedExecutionException</code> from <code>execute</code>/<code>submit</code>, in the caller's thread.`),
+ O(`AbortPolicy          ran=2 task0@pool-1-thread-1 task1@pool-1-thread-1 task2=REJECTED`),
+ Y(`"Standard: throw. Not bad, actually."`),
+ P(`<b>Use:</b> the caller decides — retry, degrade, return HTTP 503.`),
+ R(`Abort = loud "no".`)),
+S("DiscardPolicy",
+ P(`Drops the <b>new</b> task. Silently. No error.`),
+ P(`(In the recording the lecturer describes Discard as "deleting one of the existing tasks". That's DiscardOldest. Tested: DiscardPolicy drops the <b>new</b> one.)`),
+ O(`DiscardPolicy        ran=2 task0@pool-2-thread-1 task1@pool-2-thread-1      <- task2 silently gone`),
+ Y(`"Quietly delete one."`),
+ P(`<b>Use:</b> fire-and-forget where loss is OK (best-effort metrics, logs).`),
+ R(`Discard = quiet drop of the newcomer.`)),
+S("DiscardOldestPolicy",
+ P(`Removes the <b>oldest</b> waiting task from the queue, then retries the new one.`),
+ O(`DiscardOldestPolicy  ran=2 task0@pool-3-thread-1 task2@pool-3-thread-1      <- task1 (oldest queued) dropped`),
+ Y(`"Delete the oldest."`),
+ P(`<b>Use:</b> the newest data wins — market prices, UI refresh. An old price is worthless.`),
+ P(`<b>Never for orders.</b> A dropped order is a real loss. For orders: Abort and surface the error. Never discard silently.`),
+ R(`DiscardOldest = freshest wins. Market data yes, orders never.`)),
+S("CallerRunsPolicy",
+ P(`The <b>submitting</b> thread runs the task itself.`),
+ O(`CallerRunsPolicy     ran=3 task2@main task0@pool-4-thread-1 task1@pool-4-thread-1`),
+ Y(`"Very strange when I first saw it — the thread that normally only adds is forced to run the task itself."`),
+ P(`<b>Why it's useful:</b> while the producer is busy running a task, it can't submit more. Natural slowdown, and nothing is lost.`),
+ P(`<b>Risk:</b> it runs synchronously in the caller — e.g. your HTTP request thread is now busy.`),
+ P(`Note: after <code>shutdown()</code>, CallerRuns and DiscardOldest silently drop the task (tested: the task did not run).`),
+ R(`CallerRuns = the producer is slowed down by doing the work.`)),
+S("See all four",
+ P(`Same setup: 1 thread, queue of 1, 3 tasks. Pick a policy.`),
+ W('reject'),
+ P(`(These results match a real JDK 21 run.)`),
+ R(`Only CallerRuns ran all 3.`)),
+S("Your own RejectedExecutionHandler",
+ P(`Anything you want: log + count, send to a dead-letter queue, or wait a bit for space (this blocks the caller for up to 2 s):`),
+ C(String.raw`RejectedExecutionHandler waitUpTo2s = (task, pool) -> {
+    if (pool.isShutdown())
+        throw new RejectedExecutionException("pool is shut down");
+    try {
+        if (!pool.getQueue().offer(task, 2, TimeUnit.SECONDS))
+            throw new RejectedExecutionException("still full after 2 s");
+    } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        throw new RejectedExecutionException("interrupted while waiting", e);
+    }
+};`),
+ R(`Production: a custom handler + a metric on rejections.`))
+]},
+
+{t:"Backpressure and availability",steps:[
+S("The \"kek\" server",
+ Y(`"I built a server. You send requests and get back 'kek', 'kek', 'kek' — or 'no resources'. Instantly. A million requests, a million instant answers."`),
+ Q(`Is this server highly available?`,
+   `<p><b>Yes.</b> Availability = you get an answer, quickly.</p><p>It says nothing about the answer being what you wanted.</p>`),
+ R(`Fast answer = available. Even if the answer is "no".`)),
+S("Availability vs consistency",
+ P(`<b>Availability</b>: you always get a response, fast.`),
+ P(`<b>Consistency</b>: the response is the correct, complete result you wanted.`),
+ P(`The lecturer nodded to <b>CAP</b>: Consistency, Availability, Partition tolerance.`),
+ R(`Available ≠ correct.`)),
+S("Small queue vs huge queue",
+ TB(`<tr><th>Queue</th><th>Availability</th><th>Completeness</th><th>Wait time of accepted tasks</th></tr>
+ <tr><td><b>small</b> (e.g. 10) + Abort</td><td>high — you learn "no" at once</td><td>lower — many refused</td><td>low, predictable</td></tr>
+ <tr><td><b>huge</b> (2 billion)</td><td>everything "accepted"…</td><td>…but will it ever come back? unclear</td><td>unbounded</td></tr>`),
+ Y(`"You decide how your program should behave: answer immediately that it can't, or answer late. But know that the standard pools have practically no backpressure."`),
+ R(`Bounded queue = fast "no" + fast "yes".`)),
+S("\"Why would 1000 be slower than 10?\"",
+ P(`A student guessed: context switching.`),
+ P(`<b>No.</b> The queue holds <b>tasks</b>, not threads. Threads are still 10.`),
+ P(`The 1000th task simply waits for the 999 before it.`),
+ R(`Bigger queue = longer waiting, not more switching.`)),
+S("A practical recipe",
+ P(`<b>Queue size ≈ throughput × acceptable wait.</b>`),
+ P(`Example: the pool finishes 200 tasks/s. You accept 0.5 s of waiting → queue ≈ 100.`),
+ P(`<ul><li>Abort (or custom handler) → map to HTTP 429 / 503</li><li>Count rejections as a metric</li></ul>`),
+ R(`A rejection is a signal, not a bug.`))
+]},
+
+{t:"How many threads?",steps:[
+S("CPU-bound vs IO-bound",
+ P(`<b>CPU-bound</b> (computing): about the number of cores — <code>Runtime.getRuntime().availableProcessors()</code>. Maybe ×2 to ×4, but only after a benchmark. More threads only add context switches. <i>Java Concurrency in Practice</i> suggests cores + 1.`),
+ P(`<b>IO-bound</b> (waiting on network, DB, disk): many more than cores, because threads mostly wait. Or virtual threads.`),
+ R(`CPU → cores. IO → many, or virtual.`)),
+S("A formula for IO work",
+ P(`From <i>Java Concurrency in Practice</i>:`),
+ C(`threads = cores × targetUtilisation × (1 + waitTime / computeTime)`,'text'),
+ P(`Example: 8 cores, want 100 % use, each request waits 90 ms on the DB and computes 10 ms.`),
+ C(`8 × 1.0 × (1 + 90/10) = 8 × 10 = 80 threads`,'text'),
+ R(`The more a task waits, the more threads you need.`)),
+S("Always measure",
+ P(`Bound the queue on purpose. Small queue = fast rejections, predictable latency. Large queue = fewer rejections, a long tail of slow answers.`),
+ Y(`"I can't tell you 'make it big' or 'make it small' — you have to pick and measure."`),
+ P(`Then load-test and watch:`),
+ P(`<ul><li>rejections</li><li>queue depth</li><li>active threads</li><li>task latency percentiles (p50, p99)</li></ul>`),
+ R(`Formulas give a start. Measurements give the answer.`))
+]},
+
+{t:"Start, stop, wait (lifecycle)",steps:[
+S("execute vs submit",
+ C(String.raw`ex.execute(runnable);                    // fire and forget, no result
+Future<Integer> f = ex.submit(callable);  // result (or exception) later`),
+ R(`execute = no handle. submit = a Future.`)),
+S("shutdown()",
+ P(`<ul><li>Stops accepting new tasks (they get rejected).</li><li>Tasks already queued <b>will</b> still run.</li><li>Returns <b>immediately</b>. It does not wait!</li></ul>`),
+ R(`shutdown = "no more, finish what you have".`)),
+S("shutdownNow()",
+ P(`<ul><li>Stops accepting.</li><li>Calls <code>interrupt()</code> on every worker.</li><li>Returns the list of queued tasks that never started.</li></ul>`),
+ C(String.raw`List<Runnable> notStarted = ex.shutdownNow();`),
+ P(`It only <b>asks</b> tasks to stop. A task that ignores interruption keeps running.`),
+ R(`shutdownNow = interrupt + hand back the waiting tasks.`)),
+S("awaitTermination(timeout, unit)",
+ P(`Blocks until all workers finished, or the timeout passes.`),
+ P(`Returns <code>true</code> if finished, <code>false</code> if timed out.`),
+ P(`Call it <b>after</b> shutdown — otherwise it just waits out the timeout.`),
+ R(`awaitTermination = the waiting part.`)),
+S("close() — JDK 19+",
+ P(`<code>close()</code> = <code>shutdown()</code> + wait until everything finished.`),
+ C(String.raw`try (ExecutorService ex = Executors.newFixedThreadPool(4)) {
+    ex.submit(() -> doWork());
+}   // close() is called here and waits`),
+ R(`try-with-resources closes the pool for you.`)),
+S("The standard graceful shutdown",
+ P(`This pattern is from the <code>ExecutorService</code> documentation:`),
+ C(String.raw`void shutdownAndAwaitTermination(ExecutorService pool) {
+    pool.shutdown();                                     // 1. no new tasks
+    try {
+        if (!pool.awaitTermination(60, TimeUnit.SECONDS)) {
+            pool.shutdownNow();                          // 2. interrupt running tasks
+            if (!pool.awaitTermination(60, TimeUnit.SECONDS))
+                System.err.println("Pool did not terminate");
+        }
+    } catch (InterruptedException ie) {
+        pool.shutdownNow();
+        Thread.currentThread().interrupt();              // keep the interrupt flag
+    }
+}`),
+ R(`Polite first, then firm, then give up and report.`)),
+S("Two classic traps",
+ P(`<b>1. "My program never exits."</b> You forgot to shut down a pool with non-daemon threads. They keep the JVM alive after <code>main</code> ends.`),
+ P(`<b>2. Shutdown hangs forever.</b> A task ignores interruption (e.g. <code>while (true) {}</code>). There is no "kill": <code>Thread.stop()</code> throws <code>UnsupportedOperationException</code> since JDK 20. The last resort is <code>System.exit</code>.`),
+ R(`Always shut pools down. Write tasks that react to interrupt.`)),
+S("Monitoring hooks",
+ P(`On <code>ExecutorService</code>: <code>isShutdown()</code>, <code>isTerminated()</code>.`),
+ P(`On <code>ThreadPoolExecutor</code>: <code>getActiveCount()</code>, <code>getPoolSize()</code>, <code>getQueue().size()</code>, <code>getCompletedTaskCount()</code>, <code>getLargestPoolSize()</code>.`),
+ R(`Export these as metrics.`)),
+S("★ Deeper: Future in 5 minutes",
+ P(`The lecturer left <code>Future</code> for a later lesson, but you use it with every <code>submit()</code>. The essentials, all in one run:`),
+ C(String.raw`ExecutorService ex = Executors.newFixedThreadPool(2);
+
+Future<Integer> f = ex.submit(() -> { Thread.sleep(300); return 42; });
+System.out.println("isDone right away? " + f.isDone());
+System.out.println("get() = " + f.get());                        // waits ~300 ms
+System.out.println("isDone now? " + f.isDone());
+
+Future<Integer> slow = ex.submit(() -> { Thread.sleep(5000); return 1; });
+try {
+    slow.get(500, TimeUnit.MILLISECONDS);                         // wait at most 0.5 s
+} catch (TimeoutException e) {
+    System.out.println("timed out -> cancel(true) = " + slow.cancel(true)
+            + ", isCancelled = " + slow.isCancelled());
+}
+
+Future<Integer> bad = ex.submit(() -> { if (true) throw new IllegalStateException("bad input"); return 0; });
+try {
+    bad.get();
+} catch (ExecutionException e) {
+    System.out.println("ExecutionException, cause = " + e.getCause());
+}
+ex.shutdown();`),
+ O(`isDone right away? false
+get() = 42
+isDone now? true
+timed out -> cancel(true) = true, isCancelled = true
+ExecutionException, cause = java.lang.IllegalStateException: bad input`),
+ P(`<ul><li><code>get()</code> waits for the result. <code>get(timeout)</code> waits at most that long, then throws <code>TimeoutException</code>.</li>
+ <li><code>cancel(true)</code> interrupts the running task (it must react to interrupts to actually stop).</li>
+ <li>An exception inside the task comes out of <code>get()</code> wrapped in <code>ExecutionException</code>. <code>getCause()</code> gives you the original.</li></ul>`),
+ R(`Future = a receipt: check it, wait on it (with a timeout), or cancel it.`)),
+S("★ Deeper: CompletableFuture — a first look",
+ P(`A <code>Future</code> makes you <b>wait</b> for the result. A <code>CompletableFuture</code> lets you say what to do <b>next</b>, step by step, and handle failure in one place.`),
+ C(String.raw`String ok = CompletableFuture.supplyAsync(() -> "order-42")     // runs on another thread
+        .thenApply(id -> id + " priced")                          // then this, with the result
+        .thenApply(s -> s + " and sent")
+        .exceptionally(e -> "failed: " + e.getCause().getMessage())
+        .join();                                                  // wait for the final result
+System.out.println(ok);
+
+String failed = CompletableFuture
+        .supplyAsync(() -> { if (true) throw new IllegalStateException("price service down"); return "x"; })
+        .thenApply(s -> s + " priced")                            // skipped: the step before failed
+        .exceptionally(e -> "failed: " + e.getCause().getMessage())
+        .join();
+System.out.println(failed);`),
+ O(`order-42 priced and sent
+failed: price service down`),
+ P(`<ul><li><code>supplyAsync</code> starts the work on another thread (by default the common ForkJoinPool).</li>
+ <li><code>thenApply</code> transforms the result when it's ready.</li>
+ <li>If a step fails, the following steps are skipped and <code>exceptionally</code> gets the error (wrapped, hence <code>getCause()</code>).</li>
+ <li><code>join()</code> waits for the final value, like <code>get()</code> but without checked exceptions.</li></ul>`),
+ P(`Much more in the async lesson: combining several futures, choosing executors, timeouts.`),
+ R(`CompletableFuture = a pipeline of steps, with one place for errors.`)),
+]},
+
+{t:"When a task throws",steps:[
+S("First: every process has an exit code",
+ C(String.raw`$ ls; echo $?          # 0  -> everything went fine
+$ ls /nope; echo $?    # 2  -> non-zero = failure
+$ java Main; echo $?   # 0  -> the JVM is just another process`,'bash'),
+ Y(`"public static void main is misleading: void suggests nothing is returned, but the process does return a code. public static int main would be more honest. Java is nothing special — a process that ends with some code, like ls or echo."`),
+ R(`The JVM ends with an exit code like any process.`)),
+S("Exception in main",
+ P(`(In the recording it's hard to hear what the terminal printed at this point. Tested on JDK 21, several times: the exit code is <b>1</b>.)`),
+ P(`<ul><li>Console: <code>Exception in thread "main" ...</code> + stack trace</li><li>Exit code: <b>1</b></li><li><code>main</code> is dead, but the JVM still waits for other non-daemon threads. Tested: another thread finished its work after main died, and the exit code was still 1.</li></ul>`),
+ R(`main throws → exit code 1.`)),
+S("Exception in a child thread",
+ P(`<ul><li>Console: <code>Exception in thread "child" ...</code> + stack trace</li><li>Only that thread dies (<code>TERMINATED</code>).</li><li>Everyone else keeps going. Nobody notices.</li><li>Exit code: <b>0</b> (if <code>main</code> ended normally).</li></ul>`),
+ R(`Child throws → only the child dies. Exit code 0.`)),
+S("try/catch around start() catches nothing",
+ C(String.raw`try {
+    Thread t = new Thread(() -> { throw new RuntimeException("kek from child"); }, "child");
+    t.start();
+    t.join();
+    System.out.println("child state = " + t.getState() + ", catch block reached? no");
+} catch (RuntimeException e) {
+    System.out.println("caught in main");   // never reached
+}`),
+ O(`Exception in thread "child" java.lang.RuntimeException: kek from child
+child state = TERMINATED, catch block reached? no`),
+ P(`Why? Each thread has its <b>own stack</b>. The exception unwinds the child's stack and ends there.`),
+ Y(`"'It propagates upward' is intuitively right and factually wrong. Upward to where? Each thread has its own stack."`),
+ R(`Exceptions never jump from one thread to another.`)),
+S("Who printed that stack trace?",
+ P(`The thread's <b>UncaughtExceptionHandler</b>. The chain:`),
+ P(`<ol><li>the thread's own handler, if set</li><li>its <code>ThreadGroup</code></li><li><code>Thread.getDefaultUncaughtExceptionHandler()</code></li><li>otherwise: print the stack trace to <code>System.err</code></li></ol>`),
+ C(String.raw`Thread.setDefaultUncaughtExceptionHandler((thread, e) ->
+        System.err.println("crash in " + thread.getName() + ": " + e));`),
+ R(`Set a handler to log, alert, or react properly.`)),
+S("Interview: a request handler throws on the server",
+ Q(`Tomcat / Spring Boot: one request handler throws an unhandled exception. What happens to the server?`,
+   `<p><b>Nothing happens to the server.</b> Only that request's thread is affected.</p>
+   <p>The framework usually catches it at the top and returns HTTP 500. If a pool worker dies, <code>ThreadPoolExecutor</code> replaces it.</p>
+   <p>Real dangers:</p><ul><li>the exception is silently swallowed — nobody learns about it</li><li>the dead thread held a lock or connection that is now leaked</li><li><code>StackOverflowError</code> / <code>OutOfMemoryError</code> — JVM-wide problems, not "just a thread"</li></ul>`),
+ R(`One thread's exception doesn't kill other threads.`)),
+S("In a pool: execute()",
+ P(`The exception leaves <code>run()</code> → goes to the worker's UncaughtExceptionHandler.`),
+ P(`<ul><li>You see a stack trace on stderr <b>immediately</b>.</li><li>The worker thread dies and the pool <b>replaces</b> it with a new one.</li></ul>`),
+ C(String.raw`ExecutorService pool = Executors.newFixedThreadPool(1);
+pool.execute(() -> { throw new RuntimeException("boom via execute"); });
+// later:
+pool.submit(() -> Thread.currentThread().getName()).get();   // which thread?`),
+ O(`Exception in thread "pool-1-thread-1" java.lang.RuntimeException: boom via execute
+next task runs on: pool-1-thread-2          <- thread-1 died, thread-2 replaced it`),
+ R(`execute + throw = printed at once, worker replaced.`)),
+S("In a pool: submit()",
+ P(`The exception is <b>stored inside the Future</b> (a <code>FutureTask</code>).`),
+ C(String.raw`Future<?> f = pool.submit(() -> { throw new RuntimeException("boom via submit"); });
+// nothing is printed. f.isDone() == true
+f.get();   // throws ExecutionException; getCause() = the RuntimeException`),
+ O(`after submit: nothing printed, f.isDone() = true
+f.get() -> ExecutionException, cause = java.lang.RuntimeException: boom via submit`),
+ P(`The worker survives. Nothing is printed. If nobody calls <code>get()</code>, the exception is lost forever.`),
+ Y(`"If we don't handle it, that Runnable just dies and we never learn anything about it. Something may appear in the log, but we control nothing."`),
+ R(`submit + ignored Future = lost exception. The #1 production mistake here.`)),
+S("Fix (a): catch inside the task",
+ C(String.raw`pool.execute(() -> {
+    try {
+        doWork();
+    } catch (Exception e) {
+        System.err.println("task failed: " + e);   // log, count, decide
+    }
+});`),
+ P(`Boring and correct. Mandatory for repeating tasks on a scheduled pool.`),
+ R(`The simplest fix: every task handles its own exceptions.`)),
+S("Fix (b): override afterExecute",
+ P(`A hook that runs after every task. Subtlety: for <code>execute()</code> tasks, <code>t</code> is the exception. For <code>submit()</code> tasks, <code>t</code> is <code>null</code> — the exception sits in the Future.`),
+ C(String.raw`ThreadPoolExecutor pool = new ThreadPoolExecutor(4, 4, 0, TimeUnit.SECONDS,
+        new ArrayBlockingQueue<>(1000)) {
+    @Override protected void afterExecute(Runnable r, Throwable t) {
+        super.afterExecute(r, t);
+        if (t == null && r instanceof Future<?> f) {       // submit(): unwrap it
+            try {
+                if (f.isDone()) f.get();                    // doesn't block: task finished
+            } catch (CancellationException ce) { t = ce;
+            } catch (ExecutionException ee)   { t = ee.getCause();
+            } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+        }
+        if (t != null) System.err.println("task failed: " + t);   // one place for all failures
+    }
+};`),
+ P(`Test: <code>execute</code> a task that throws "from execute", <code>submit</code> one that throws "from submit":`),
+ O(`task failed: java.lang.RuntimeException: from execute
+task failed: java.lang.RuntimeException: from submit
+Exception in thread "pool-2-thread-1" java.lang.RuntimeException: from execute`),
+ P(`See the last line? <code>afterExecute</code> only <b>sees</b> the exception. For an <code>execute()</code> task, the worker still dies afterwards and the default handler still prints it. The pool then replaces the worker.`),
+ R(`afterExecute sees both — if you unwrap the Future. It doesn't stop the worker from dying.`)),
+S("Fix (c): ThreadFactory + UncaughtExceptionHandler",
+ C(String.raw`ThreadFactory tf = Thread.ofPlatform()
+        .name("w-", 1)                                   // w-1, w-2, ...
+        .uncaughtExceptionHandler((thread, e) ->
+                System.out.println("uncaught in " + thread.getName() + ": " + e))
+        .factory();
+ExecutorService ex = new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS,
+        new ArrayBlockingQueue<>(1000), tf);
+
+ex.execute(() -> { throw new RuntimeException("crash 1"); });
+ex.execute(() -> System.out.println("next task runs on " + Thread.currentThread().getName()));
+ex.submit(() -> { throw new RuntimeException("crash via submit"); });   // UEH sees nothing`),
+ O(`uncaught in w-1: java.lang.RuntimeException: crash 1
+next task runs on w-2          <- pool replaced the dead worker`),
+ P(`Covers <code>execute()</code> tasks. Does <b>not</b> see <code>submit()</code> exceptions — they never escape the Future.`),
+ R(`UEH sees execute() crashes only. Combine with (b) or read your Futures.`)),
+S("Plus: always consume your Futures",
+ C(String.raw`Future<Integer> f = pool.submit(() -> compute());
+try {
+    Integer result = f.get(5, TimeUnit.SECONDS);   // always with a timeout
+} catch (ExecutionException e) {
+    System.err.println("task failed: " + e.getCause());   // the real exception
+} catch (TimeoutException e) {
+    f.cancel(true);                                 // interrupts the task
+} catch (InterruptedException e) {
+    Thread.currentThread().interrupt();
+}`),
+ P(`Or with <code>CompletableFuture</code>: <code>.exceptionally(...)</code>.`),
+ Y(`The lecturer left Future and CompletableFuture for a later lesson: "there are a number of subtleties there."`),
+ R(`Never submit() and drop the Future.`))
+]},
+
+{t:"Checklist",steps:[
+S("Normal work, part 1",
+ P(`<ol><li>Program to <code>ExecutorService</code>. In services, build <code>ThreadPoolExecutor</code> yourself. Shortcuts are fine for scripts, tests, CPU pools sized to cores.</li>
+ <li>Size threads by workload (CPU vs IO). <b>Bound the queue.</b> Choose the rejection policy on purpose.</li>
+ <li>Name threads with a <code>ThreadFactory</code>.</li>
+ <li>Never block a pool thread waiting for a result from the <b>same</b> pool.</li></ol>`),
+ Q(`Why is point 4 dangerous?`,
+   `<p><b>Pool deadlock.</b> Task A runs on the pool, submits task B to the same pool and waits for B. If all workers are waiting like A, B can never start. Everyone waits forever.</p><p>Fix: separate pools per stage, or virtual threads.</p>`),
+ R(`Bound the queue. Name the threads. Don't wait on your own pool.`)),
+S("★ Example: a pool deadlock",
+ P(`Point 4 above, shown for real. A task in a 1-thread pool submits another task to the <b>same</b> pool and waits for it:`),
+ C(String.raw`ExecutorService single = Executors.newSingleThreadExecutor();
+
+Future<String> outer = single.submit(() -> {
+    Future<String> inner = single.submit(() -> "inner result");   // queued BEHIND this task...
+    return "outer got: " + inner.get();                           // ...and this task waits for it
+});
+try {
+    System.out.println(outer.get(2, TimeUnit.SECONDS));
+} catch (TimeoutException e) {
+    System.out.println("still waiting after 2 s -> pool deadlock");
+}
+single.shutdownNow();`),
+ O(`still waiting after 2 s -> pool deadlock`),
+ P(`The only worker is busy running <code>outer</code>, which waits for <code>inner</code>. But <code>inner</code> sits in the queue waiting for a free worker. Nobody can move.`),
+ P(`With 10 workers it's the same, just later: once all 10 are waiting on queued tasks, the pool freezes. No exception, no error.`),
+ P(`Fixes: separate pools for separate stages; don't block inside pool tasks on results from the same pool; or use virtual threads (a new thread per task, so nothing waits for a free worker).`),
+ R(`A task waiting for a task in the same pool can freeze the pool.`)),
+S("Normal work, part 2",
+ P(`<ol start="5"><li>Don't share one pool between latency-critical and batch work. Isolate them ("bulkheads").</li>
+ <li>Make tasks <b>short</b> and <b>interruptible</b>. A long task blocks everything behind it (head-of-line blocking).</li>
+ <li>Shut pools down on application stop (<code>close()</code> or <code>shutdown</code> + <code>awaitTermination</code>), and register them with your framework's lifecycle so this happens automatically.</li>
+ <li>Expose metrics: queue size, active threads, rejections, completed count, task latency.</li></ol>`),
+ R(`Separate pools for separate jobs. Short tasks. Clean stop. Metrics.`)),
+S("Exceptional situations",
+ P(`<ol><li>Pick <b>one</b> central place for exceptions: inside the task, <code>afterExecute</code>, UEH, or <code>Future.get</code>. Make losing one impossible.</li>
+ <li>Never <code>submit()</code> and drop the Future.</li>
+ <li>Repeating tasks: catch everything — one throw cancels the schedule.</li>
+ <li>On overload prefer <b>fast rejection</b> (→ 429/503) over silent buffering. Treat rejections as a signal to scale up or shed load.</li>
+ <li>After shutdown, late submits get <code>RejectedExecutionException</code>. Handle it.</li>
+ <li><code>shutdownNow()</code> can't kill a task. A task that ignores interrupts keeps the pool and the JVM alive. <code>System.exit</code> is the nuclear option.</li></ol>`),
+ R(`No exception may disappear. No overload may hide.`))
+]},
+
+{t:"Pros and cons",steps:[
+S("Every pool type, compared",
+ TB(`<tr><th>Pool</th><th>Pros</th><th>Cons</th></tr>
+ <tr><td>Fixed</td><td>predictable parallelism; simple; good for CPU work</td><td>unbounded queue; no elasticity</td></tr>
+ <tr><td>Cached</td><td>elastic for bursts of short tasks; threads reused within 60 s</td><td>unlimited threads; fatal with long/blocking tasks under load</td></tr>
+ <tr><td>Single</td><td>order guarantee; safe home for non-thread-safe code; worker replaced on failure</td><td>throughput of one thread; unbounded queue</td></tr>
+ <tr><td>Scheduled</td><td>timers, repeats, delays in one place</td><td>exception cancels the schedule; fixed-rate runs can pile up</td></tr>
+ <tr><td>Custom ThreadPoolExecutor</td><td>bounded queue, backpressure, hooks, names, growth core→max</td><td>you must understand the rule (chapter 4)</td></tr>
+ <tr><td>Virtual per task</td><td>unlimited IO concurrency; simple blocking code; auto-close</td><td>no CPU gain; pinning on synchronized before JDK 24; no backpressure (add a Semaphore)</td></tr>
+ <tr><td>Work-stealing / ForkJoin</td><td>excellent for recursive CPU tasks; used by parallel streams</td><td>daemon threads; bad for blocking tasks (unless <code>ManagedBlocker</code>)</td></tr>`),
+ R(`No pool is "best". Each fits one kind of work.`)),
+S("Writing your own pool: pros and cons",
+ P(`<b>Pros:</b> you understand exactly what the JDK does. And you can add what it lacks: priority scheduling, per-key ordering (the same account id always on the same worker — the hedge-fund "shard it" follow-up), lock-free ring buffers, workers pinned to cores, custom backpressure.`),
+ P(`<b>Cons:</b> every step of the build plan (chapter 16) is easy to get wrong; memory-model subtleties; no <code>Future</code>; you become the maintainer.`),
+ P(`In ordinary services: use <code>ThreadPoolExecutor</code> and configure it well.`),
+ R(`Build your own to learn, or for special needs. Otherwise use the JDK's.`)),
+S("Pools in general: pros and cons",
+ P(`<b>Pros:</b> thread creation paid once; a limit on concurrency; one place for overload policy, names, logging, metrics, clean shutdown. Every server uses this pattern: Tomcat, Netty, JDBC connection pools.`),
+ P(`<b>Cons:</b> one slow task occupies a worker for its whole run (head-of-line blocking); an unbounded queue hides overload until memory runs out; badly designed tasks can't be stopped; wrong size = idle cores or thrashing.`),
+ R(`Pools are everywhere — and each con above is a real incident waiting to happen.`))
+]},
+
+{t:"Interview practice",steps:[
+S("Questions 1–5",
+ P(`Answer out loud first. Then open.`),
+ Q(`Name the 7 ThreadPoolExecutor parameters and the order a task goes through.`,
+   `<p>core, max, keepAlive + unit, workQueue, threadFactory, handler.</p><p>Order: core threads → queue → extra threads up to max → reject.</p>`),
+ Q(`Why is max ignored with an unbounded queue?`,
+   `<p>Extra threads are created only when <code>offer()</code> fails (queue full). An unbounded queue never fills, so the pool never grows past core.</p>`),
+ Q(`What are fixed, cached and single pools made of? Each one's danger?`,
+   `<p>Fixed: (n, n, LinkedBlockingQueue) → endless backlog.<br>Cached: (0, MAX_VALUE, 60 s, SynchronousQueue) → unlimited threads.<br>Single: (1, 1, LinkedBlockingQueue), wrapped → endless backlog, one thread of throughput.</p>`),
+ Q(`What is a SynchronousQueue? Why does the cached pool make a thread per task?`,
+   `<p>A queue with capacity 0: offer succeeds only if a worker is waiting right now. Under a burst no one is waiting, offer fails, so the pool creates a new thread.</p>`),
+ Q(`Four rejection policies and a real use for each.`,
+   `<p>Abort → caller decides / 503. Discard → best-effort metrics. DiscardOldest → market data (fresh wins). CallerRuns → throttling producers without losing work.</p><p>For <b>orders</b>: Abort and surface the error — never discard silently.</p>`),
+ R(`Say each answer in one or two sentences.`)),
+S("Questions 6–11",
+ Q(`Why is "accepting everything" not really availability?`,
+   `<p>Availability = a fast answer. A huge queue accepts the task but the answer may come very late or never. A bounded queue gives a fast "no" and fast results for accepted tasks.</p>`),
+ Q(`execute vs submit — what happens to an exception? How do you never lose one?`,
+   `<p>execute: goes to the UncaughtExceptionHandler, printed, worker replaced. submit: stored in the Future, silent until get().</p><p>Never lose one: catch in the task, or afterExecute that unwraps Futures, or always call get() with a timeout.</p>`),
+ Q(`A request thread throws on the app server. What happens?`,
+   `<p>Only that thread/request is affected (framework → 500, or the pool replaces the worker). Risks: swallowed exception, leaked lock/connection, JVM-wide errors like OOM.</p>`),
+ Q(`Exit code if main throws? If a child thread throws?`,
+   `<p>main throws → 1. Child throws (main ended normally) → 0. "void main" is misleading: the process still returns a code.</p>`),
+ Q(`shutdown vs shutdownNow vs awaitTermination vs close?`,
+   `<p>shutdown: stop accepting, finish queue, returns immediately. shutdownNow: + interrupt workers, returns unstarted tasks. awaitTermination: wait with timeout. close: shutdown + wait (JDK 19+). None can kill a task that ignores interrupts.</p>`),
+ Q(`Which pool for: image processing / 50,000 HTTP calls / ordered file writes / night bursts of short jobs / periodic health checks?`,
+   `<p>Fixed ≈ cores / virtual threads / single thread / cached or bounded custom / scheduled with try/catch inside.</p>`),
+ R(`Next: questions about writing your own pool.`)),
+S("Questions 12–17: your own pool",
+ Q(`"Write a thread pool." What's the core, and which follow-ups come?`,`<p>Core: a queue + N workers looping over it + <code>submit</code> + <code>shutdown</code>.</p><p>Expect follow-ups in this order: thread-safe queue → blocking instead of spinning → shutdown and interruption → a task that throws → bounded queue and rejection → who starts the threads. (That's exactly the build plan in chapter 16.)</p>`),
+ Q(`Why run() and not start() inside the worker?`,`<p>The task must run on the worker thread itself. start() would create a new thread per task — exactly what a pool avoids (and Runnable has no start()).</p>`),
+ Q(`Can shutdown() hang?`,`<p>Yes, if a task ignores interruption. The pool can only ask; it can't kill a task.</p>`),
+ Q(`What happens if a task throws — in your pool, and in the JDK's?`,`<p>Your pool: the worker dies unless you catch around run(). JDK: the worker is replaced; the exception is printed (execute) or stored in the Future (submit).</p>`),
+ Q(`Why is Executors.newFixedThreadPool dangerous under overload?`,`<p>Its LinkedBlockingQueue is unbounded: it never rejects, so memory and waiting time grow until OutOfMemoryError.</p>`),
+ Q(`How many threads?`,`<p>CPU-bound ≈ cores (benchmark); IO-bound many, or virtual threads; the JCiP formula; and Amdahl — find the serial part first.</p>`),
+ R(`If these feel easy, chapter 16 is next.`))
+]},
+
+{t:"Before you build your own pool (03)",steps:[
+S("What you will build",
+ P(`A class like <code>MyThreadPool</code>:`),
+ P(`<ul><li>N worker threads</li><li>a queue of tasks</li><li><code>start()</code>, <code>submit(Runnable)</code>, <code>shutdown()</code></li></ul>`),
+ P(`Then you improve it, version by version. This chapter gives <b>tools</b> and a <b>plan</b>. No finished solution.`),
+ R(`You now know what the JDK pool does. Now you build a small one.`)),
+S("Tool 1: run() vs start() inside a worker",
+ Q(`Inside the worker's loop, do you call task.run() or task.start()?`,
+   `<p><b>run()</b>. The task must execute on this worker thread. <code>start()</code> doesn't even exist on Runnable — and on a Thread it would create a new thread, which is exactly what a pool avoids.</p>`),
+ R(`Workers call run().`)),
+S("Tool 2: the queue method table",
+ P(`Every <code>BlockingQueue</code> has four styles for each action:`),
+ TB(`<tr><th></th><th>Throws</th><th>Special value</th><th>Blocks</th><th>Times out</th></tr>
+ <tr><td>Insert</td><td><code>add(e)</code></td><td><code>offer(e)</code> → false</td><td><code>put(e)</code></td><td><code>offer(e, time, unit)</code></td></tr>
+ <tr><td>Remove</td><td><code>remove()</code></td><td><code>poll()</code> → null</td><td><code>take()</code></td><td><code>poll(time, unit)</code></td></tr>
+ <tr><td>Look</td><td><code>element()</code></td><td><code>peek()</code></td><td>–</td><td>–</td></tr>`),
+ P(`"Blocks" means the thread <b>sleeps</b> (state <code>WAITING</code>, or <code>TIMED_WAITING</code> with a timeout) and uses no CPU until it can continue.`),
+ R(`Pick the style on purpose: throw, return a value, wait, or wait a little.`)),
+S("Tool 3: which collections are safe to share",
+ TB(`<tr><th>Collection</th><th>Safe for many threads?</th><th>Blocking?</th><th>Bounded?</th></tr>
+ <tr><td><code>LinkedList</code>, <code>ArrayDeque</code></td><td><b>no</b></td><td>no</td><td>no</td></tr>
+ <tr><td><code>ConcurrentLinkedQueue</code></td><td>yes (lock-free)</td><td>no</td><td>no</td></tr>
+ <tr><td><code>LinkedBlockingQueue</code></td><td>yes</td><td>yes</td><td>optional</td></tr>
+ <tr><td><code>ArrayBlockingQueue</code></td><td>yes</td><td>yes</td><td>always</td></tr>
+ <tr><td><code>SynchronousQueue</code></td><td>yes</td><td>yes</td><td>capacity 0 (hand-off)</td></tr>
+ <tr><td><code>PriorityBlockingQueue</code></td><td>yes</td><td>yes</td><td>no (ordered by priority)</td></tr>`),
+ P(`A plain collection used by several threads at once = its inner pointers get corrupted. Elements get lost. Results differ every run.`),
+ R(`Shared between threads → a concurrent collection.`)),
+S("What happened in the lecture",
+ P(`The lecturer's live pool used a <code>LinkedList</code> as its queue. Only 1 task out of 10 ran.`),
+ Y(`"We achieved thread-safety for the flag with AtomicBoolean, but I decided to skip it for the collection because I didn't think it would surface. It did. If your code runs in a non-thread-safe environment, its behaviour is guaranteed unpredictable."`),
+ P(`His live fix was a "copy-on-write" collection (<code>CopyOnWriteArrayList</code>). It worked, but it copies its whole array on every <code>add</code>: fine for a demo, terrible for a task queue.`),
+ Q(`Which kind from the table fits a task queue better, and why?`,`<p>A concurrent <b>queue</b> — ideally a blocking one, so idle workers can wait instead of spinning (see Tool 2). Pick it yourself when you build.</p>`),
+ R(`Thread-safe isn't enough. It must also suit a queue.`)),
+S("Tool 4: a flag shared between threads",
+ P(`One thread sets <code>stop = true</code>. Other threads read it in a loop.`),
+ P(`With a plain <code>boolean</code>, the Java Memory Model does <b>not</b> promise other threads ever see the change.`),
+ P(`Use <code>volatile boolean</code> or <code>AtomicBoolean</code>. Both guarantee visibility.`),
+ R(`Shared flag → volatile or AtomicBoolean.`)),
+S("Tool 5: interruption",
+ P(`<ul><li><code>t.interrupt()</code> only sets a flag on thread t. It's a request, not a kill.</li>
+ <li>Blocking calls (<code>sleep</code>, <code>join</code>, <code>wait</code>, <code>take</code>, <code>poll(timeout)</code>) throw <code>InterruptedException</code> — and <b>clear</b> the flag.</li>
+ <li>Loops check <code>Thread.currentThread().isInterrupted()</code>.</li></ul>`),
+ C(String.raw`Runnable polite = () -> {
+    while (!Thread.currentThread().isInterrupted()) {
+        // one piece of work
+    }
+};
+Runnable rude = () -> { while (true) { } };   // nothing can stop this one`),
+ R(`A pool can only ask. The task decides whether to listen.`)),
+S("Tool 6: what an exception does to a thread",
+ P(`If <code>run()</code> of a thread throws and nobody catches it, that thread ends (<code>TERMINATED</code>).`),
+ P(`Your worker's loop is inside its <code>run()</code>. So a task that throws inside the loop…`),
+ Q(`…what happens to the worker? What should it do instead?`,
+   `<p>Without a catch: the exception leaves the loop, the worker dies, the pool silently has one worker fewer.</p><p>Think: where do you put a try/catch so one bad task can't kill a worker? Which type do you catch?</p>`),
+ R(`One bad task must not cost you a worker.`)),
+S("Build v1: the prototype",
+ P(`<b>Goal:</b> a queue, N threads, each looping: take a task, run it. <code>submit</code> adds to the queue. <code>shutdown</code> sets a flag the loop checks.`),
+ P(`<b>Test:</b> submit 1000 tasks that print the thread name.`),
+ Q(`Hint`, `<p>Build threads in the constructor, but start them in a separate <code>start()</code> method. The loop condition reads the shutdown flag.</p>`),
+ R(`Make it work first. Make it right in the next versions.`)),
+S("Build v2: is your queue safe?",
+ P(`<b>Question:</b> one thread calls <code>submit</code> while N workers take tasks at the same time. Is your queue OK with that?`),
+ P(`<b>Test:</b> submit 200,000 tasks that increment an <code>AtomicInteger</code>. After shutdown, compare submitted vs executed.`),
+ Q(`Hint`, `<p>If executed &lt; submitted (or you get odd exceptions), look at Tool 3.</p>`),
+ R(`Test with big numbers: races hide at small ones.`)),
+S("Build v3: what do idle workers do?",
+ P(`<b>Question:</b> the queue is empty. What are your workers doing? Open a CPU monitor and look.`),
+ Q(`Hint`, `<p>A loop that keeps asking "anything? anything?" burns a core per worker (busy-spin). Look at Tool 2: which remove method waits instead? And which one waits but still lets you re-check the shutdown flag?</p>`),
+ R(`Idle workers should sleep, not spin.`)),
+S("Build v4: does shutdown really finish?",
+ Y(`The lecturer asked the group: "I have 10 workers, I submit tasks, then I say shutdown(). Is it guaranteed the pool closes?" A student pointed at task.run(): "it can just run and run."`),
+ Y(`"Inside a submitted Runnable someone can write while (true) {} and your shutdown flag is irrelevant. If you write a crooked Runnable, nothing can be done about it. Period."`),
+ P(`<b>Questions:</b>`),
+ P(`<ul><li>After <code>shutdown()</code>, do already-queued tasks still run?</li><li>What if a task never ends?</li><li>How does a caller wait until the pool is done?</li></ul>`),
+ P(`Add <code>shutdownNow()</code> (returns tasks that never ran) and <code>awaitTermination(timeout)</code>.`),
+ Q(`Hint`, `<p>Keep references to your worker threads so you can interrupt and join them. Test with the polite and rude tasks from Tool 5. Also: what should a worker do when its waiting call throws InterruptedException but the pool is NOT shut down?</p>`),
+ R(`Graceful stop, forced stop, wait — three different things.`)),
+S("Build v5: a task throws",
+ P(`<b>Test:</b> 4 workers. Submit 4 tasks that throw, then 10 normal tasks.`),
+ P(`<b>Question:</b> do the 10 normal tasks run?`),
+ Q(`Hint`, `<p>Tool 6. Log the failure, count it, keep looping.</p>`),
+ R(`After v5, a bad task costs nothing but a log line.`)),
+S("Build v6: flood protection",
+ P(`<b>Test:</b> submit 1,000,000 slow tasks as fast as you can.`),
+ P(`<b>Questions:</b> how much memory does it use? Should your pool say "no"? How do you know the queue is full without waiting?`),
+ P(`In the lecture, students suggested a dead-letter queue and Kafka. The lecturer wanted the simplest answer:`),
+ Y(`"We just throw it away and say: we are full."`),
+ P(`He called it the <b>abort policy</b>: the start of backpressure. Then add a policy choice: the four from chapter 8.`),
+ Q(`Hint`, `<p>A bounded queue + the insert method from Tool 2 that returns false instead of throwing or waiting. Then a switch on the policy.</p>`),
+ R(`Your pool now has backpressure.`)),
+S("Build v7: who starts the threads?",
+ P(`<b>Question:</b> do you start threads inside the constructor?`),
+ Q(`Hint`, `<p>Starting threads (that use <code>this</code>) in a constructor lets them see a half-built object, and takes away the caller's control over when threads appear. Keep a separate <code>start()</code>.</p>`),
+ R(`Constructors build. start() starts.`)),
+S("How to test your pool",
+ P(`<ul><li>Counter test: submitted == executed (with big numbers).</li>
+ <li>CPU test: idle pool ≈ 0 % CPU.</li>
+ <li>Crash test: throwing tasks don't reduce the worker count.</li>
+ <li>Stop test: polite infinite task stops on <code>shutdownNow</code>, not on <code>shutdown</code>.</li>
+ <li>Flood test: rejections happen, memory stays flat.</li>
+ <li>Fairness look: print thread names — is work spread evenly? (It won't be perfectly. Why?) The lecturer called this checking for <b>starvation</b>; the basics page (chapter 4, ★ step) shows a real pool where one worker did 997 of 1000 tasks.</li></ul>`),
+ R(`Each test matches one version.`)),
+S("Then compare with the JDK",
+ P(`After your pool works, list what <code>ThreadPoolExecutor</code> still does that yours doesn't:`),
+ P(`<ul><li><code>Future</code> / <code>Callable</code>: results, exceptions, cancel</li><li>growing core → max, keep-alive</li><li>replacing dead workers</li><li><code>beforeExecute</code> / <code>afterExecute</code> hooks, <code>ThreadFactory</code></li><li>metrics</li><li>documented memory-model guarantees</li></ul>`),
+ R(`Building one yourself = you'll never misconfigure the real one.`))
+]}
+];
+
+/* ---------- helpers ---------- */
+const $=s=>document.querySelector(s);
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+const KW=new Set('abstract boolean break case catch class continue default do else extends final finally for if implements import instanceof int long new null private protected public return static super switch this throw throws true false try var void while'.split(' '));
+function hlJava(line){
+  // split off // comment (not inside a string)
+  let inS=false, cut=-1;
+  for(let i=0;i<line.length;i++){const ch=line[i];
+    if(ch==='\\'&&inS){i++;continue}
+    if(ch==='"'){inS=!inS;continue}
+    if(!inS&&ch==='/'&&line[i+1]==='/'){cut=i;break}}
+  const codePart=cut<0?line:line.slice(0,cut), com=cut<0?'':line.slice(cut);
+  const re=/("(?:[^"\\]|\\.)*")|(@\w+)|\b(\d[\d_]*L?)\b|\b([A-Za-z_]\w*)\b/g;
+  let out='',last=0,m;
+  while((m=re.exec(codePart))){
+    out+=esc(codePart.slice(last,m.index));
+    if(m[1])out+='<span class="ts">'+esc(m[1])+'</span>';
+    else if(m[2])out+='<span class="tk">'+esc(m[2])+'</span>';
+    else if(m[3])out+='<span class="tn">'+m[3]+'</span>';
+    else{const w=m[4]; if(KW.has(w))out+='<span class="tk">'+w+'</span>'; else if(/^[A-Z]/.test(w)&&!/^[A-Z_]+$/.test(w))out+='<span class="tt">'+w+'</span>'; else out+=w;}
+    last=re.lastIndex;
+  }
+  out+=esc(codePart.slice(last));
+  if(com)out+='<span class="tc">'+esc(com)+'</span>';
+  return out;
+}
+function hl(src,lang){
+  if(lang==='java')return src.split('\n').map(hlJava).join('\n');
+  if(lang==='bash')return src.split('\n').map(l=>{const i=l.indexOf('  #');return i<0?esc(l):esc(l.slice(0,i))+'<span class="tc">'+esc(l.slice(i))+'</span>'}).join('\n');
+  return esc(src);
+}
+function block(b){
+  switch(b[0]){
+    case 'p':return b[1].trim().startsWith('<')&&!b[1].trim().startsWith('<b')&&!b[1].trim().startsWith('<code')&&!b[1].trim().startsWith('<kbd')&&!b[1].trim().startsWith('<span')?b[1]:'<p>'+b[1]+'</p>';
+    case 'code':return '<div class="codebox"><pre><code>'+hl(b[1],b[2])+'</code></pre></div>';
+    case 'out':return '<div class="out"><div class="lbl">Output</div><pre><code>'+esc(b[1])+'</code></pre></div>';
+    case 'rem':return '<p class="rem"><span>Remember</span>'+b[1]+'</p>';
+    case 'quote':return '<p class="quote">'+b[1]+'</p>';
+    case 'q':return '<details class="q'+(b[1]==='Hint'?' hint':'')+'"><summary>'+b[1]+'</summary><div class="a">'+b[2]+'</div></details>';
+    case 'w':return '<div data-w="'+b[1]+'"></div>';
+  }
+  return '';
+}
+
+/* ---------- state ---------- */
+const flat=[]; CH.forEach((c,ci)=>c.steps.forEach((s,si)=>flat.push({ci,si})));
+function load(k,d){try{const v=localStorage.getItem('tp.'+k);return v==null?d:JSON.parse(v)}catch(e){return d}}
+function save(k,v){try{localStorage.setItem('tp.'+k,JSON.stringify(v))}catch(e){}}
+let idx=Math.min(Math.max(0,load('idx',0)|0),flat.length-1);
+let seen=new Set(load('seen',[]));
+let mode=load('mode','step')==='chapter'?'chapter':'step';
+
+function stepCard(ci,si,withFocus){
+  const s=CH[ci].steps[si];
+  return '<article class="step"><h2'+(withFocus?' tabindex="-1" id="focus"':'')+'><span class="snum">'+(si+1)+'.</span>'+s.t+'</h2>'+s.x.map(block).join('')+'</article>';
+}
+function render(focus){
+  const {ci,si}=flat[idx];
+  const ch=CH[ci];
+  seen.add(idx); save('seen',[...seen]); save('idx',idx);
+  $('#chname').textContent='Chapter '+ci+': '+ch.t;
+  if(mode==='step'){
+    $('#main').innerHTML=stepCard(ci,si,true);
+    $('#pos').textContent='Step '+(si+1)+' of '+ch.steps.length+' in this chapter';
+    $('#modebtn').textContent='Show whole chapter';
+    $('#back').disabled=idx===0;
+    $('#next').disabled=idx===flat.length-1;
+    $('#next').textContent=idx===flat.length-1?'Finished':(si===ch.steps.length-1?'Next chapter':'Next');
+  }else{
+    $('#main').innerHTML=ch.steps.map((_,k)=>stepCard(ci,k,k===0)).join('');
+    ch.steps.forEach((_,k)=>seen.add(flat.findIndex(f=>f.ci===ci&&f.si===k))); save('seen',[...seen]);
+    $('#pos').textContent=ch.steps.length+' steps';
+    $('#modebtn').textContent='One step at a time';
+    $('#back').disabled=ci===0;
+    $('#next').disabled=ci===CH.length-1;
+    $('#next').textContent='Next chapter';
+  }
+  $('#bar').style.width=((idx+1)/flat.length*100)+'%';
+  document.querySelectorAll('[data-w]').forEach(el=>{if(el.dataset.w==='sim')initSim(el);if(el.dataset.w==='reject')initReject(el)});
+  buildMap();
+  if(focus){window.scrollTo(0,0);const f=$('#focus');if(f)f.focus({preventScroll:true});}
+}
+function go(d){
+  if(mode==='step'){idx=Math.min(Math.max(0,idx+d),flat.length-1);}
+  else{const ci=Math.min(Math.max(0,flat[idx].ci+d),CH.length-1);idx=flat.findIndex(f=>f.ci===ci);}
+  render(true);
+}
+$('#next').onclick=()=>go(1); $('#back').onclick=()=>go(-1);
+$('#modebtn').onclick=()=>{mode=mode==='step'?'chapter':'step';save('mode',mode);if(mode==='chapter'){idx=flat.findIndex(f=>f.ci===flat[idx].ci);}render(true)};
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape')closeMap();
+  const tag=(e.target.tagName||'').toLowerCase();
+  if(tag==='input'||tag==='select'||tag==='textarea'||e.altKey||e.ctrlKey||e.metaKey)return;
+  if(document.body.classList.contains('open'))return;
+  if(e.key==='ArrowRight'){e.preventDefault();go(1)}
+  if(e.key==='ArrowLeft'){e.preventDefault();go(-1)}
+});
+
+/* ---------- map ---------- */
+function buildMap(){
+  const cur=flat[idx];
+  let h='';let k=0;
+  CH.forEach((c,ci)=>{
+    const done=c.steps.every((_,si)=>seen.has(flat.findIndex(f=>f.ci===ci&&f.si===si)));
+    h+='<details'+(ci===cur.ci?' open':'')+'><summary>'+ci+'. '+c.t+(done?' ✓':'')+'</summary><ol>';
+    c.steps.forEach((s,si)=>{const g=k++;
+      h+='<li><button data-go="'+g+'" class="'+(ci===cur.ci&&(mode==='chapter'||si===cur.si)?'cur':'')+'"><span class="ck">'+(seen.has(g)?'✓':'')+'</span><span>'+(si+1)+'. '+s.t+'</span></button></li>';});
+    h+='</ol></details>';
+  });
+  $('#maplist').innerHTML=h;
+}
+$('#maplist').addEventListener('click',e=>{const b=e.target.closest('[data-go]');if(!b)return;idx=+b.dataset.go;if(mode==='chapter')mode='step',save('mode',mode);closeMap();render(true)});
+function openMap(){document.body.classList.add('open');$('#mapbtn').setAttribute('aria-expanded','true');$('#closemap').focus()}
+function closeMap(){if(!document.body.classList.contains('open'))return;document.body.classList.remove('open');$('#mapbtn').setAttribute('aria-expanded','false');$('#mapbtn').focus()}
+$('#mapbtn').onclick=openMap; $('#closemap').onclick=closeMap; $('#scrim').onclick=closeMap;
+$('#reset').onclick=()=>{seen=new Set();idx=0;save('seen',[]);save('idx',0);closeMap();render(true)};
+// the drawer lives outside body class target: move shell children under body for .open selector
+document.querySelectorAll('#shell > *').forEach(n=>document.body.appendChild(n));
+
+/* ---------- simulator ---------- */
+function initSim(el){
+  el.innerHTML=`<div class="sim">
+   <div class="pre" role="group" aria-label="Presets">
+    <button data-p="2,2,abq,3,10">2 / 2 / queue 3, 10 tasks</button>
+    <button data-p="2,4,abq,2,6">2 / 4 / queue 2, 6 tasks</button>
+    <button data-p="2,100,lbq,0,50">2 / 100 / unbounded, 50 tasks</button>
+    <button data-p="0,inf,sq,0,20">cached: 0 / ∞ / SynchronousQueue</button>
+    <button data-p="4,4,lbq,0,20">fixed(4)</button>
+    <button data-p="0,10,lbq,0,5">core 0 / 10 / unbounded</button>
+   </div>
+   <div class="ctl">
+    <label>corePoolSize<input type="number" min="0" max="50" data-k="core" value="2"></label>
+    <label>maximumPoolSize<input type="number" min="1" max="200" data-k="max" value="4"></label>
+    <label class="chk"><input type="checkbox" data-k="inf"> max = Integer.MAX_VALUE</label>
+    <label>Queue<select data-k="qt"><option value="abq">ArrayBlockingQueue(n)</option><option value="lbq">LinkedBlockingQueue() unbounded</option><option value="sq">SynchronousQueue (capacity 0)</option></select></label>
+    <label>Queue capacity n<input type="number" min="1" max="500" data-k="cap" value="2"></label>
+    <label>Tasks for "Submit all"<input type="number" min="1" max="500" data-k="n" value="6"></label>
+   </div>
+   <div class="code-line" data-o="code"></div>
+   <div class="act"><button class="main" data-a="one">Submit 1 task</button><button data-a="all">Submit all</button><button data-a="reset">Reset</button></div>
+   <div data-o="err" class="simerr" role="alert"></div>
+   <div class="lane"><div class="lh" style="color:var(--thread)">Threads (running tasks)</div><div class="chips" data-o="th"></div></div>
+   <div class="lane"><div class="lh" style="color:var(--queue)">Queue (waiting tasks)</div><div class="chips" data-o="qu"></div></div>
+   <div class="lane"><div class="lh" style="color:var(--reject)">Rejected</div><div class="chips" data-o="rj"></div></div>
+   <div class="simlog" data-o="log" aria-live="polite"></div>
+  </div>`;
+  const q=s=>el.querySelector(s), inp=k=>q('[data-k="'+k+'"]');
+  let st;
+  function cfg(){
+    const core=Math.max(0,+inp('core').value|0), inf=inp('inf').checked, max=inf?Infinity:Math.max(0,+inp('max').value|0), qt=inp('qt').value, cap=qt==='abq'?Math.max(1,+inp('cap').value|0):(qt==='lbq'?Infinity:0), n=Math.max(1,Math.min(500,+inp('n').value|0));
+    inp('max').disabled=inf; inp('cap').disabled=qt!=='abq';
+    return {core,max,qt,cap,n,inf};
+  }
+  function reset(){
+    const c=cfg();
+    st={c,threads:[],queue:[],rej:[],k:0,log:[]};
+    const qs=c.qt==='abq'?'new ArrayBlockingQueue<>('+c.cap+')':c.qt==='lbq'?'new LinkedBlockingQueue<>()':'new SynchronousQueue<>()';
+    q('[data-o=code]').textContent='new ThreadPoolExecutor('+c.core+', '+(c.inf?'Integer.MAX_VALUE':c.max)+', 60, SECONDS, '+qs+')';
+    let err='';
+    if(!c.inf&&c.max<=0)err='maximumPoolSize must be > 0. The real constructor throws IllegalArgumentException.';
+    else if(!c.inf&&c.max<c.core)err='maximumPoolSize < corePoolSize. The real constructor throws IllegalArgumentException.';
+    q('[data-o=err]').textContent=err; st.bad=!!err;
+    q('[data-a=one]').disabled=st.bad; q('[data-a=all]').disabled=st.bad;
+    draw();
+  }
+  function add(){
+    const c=st.c, id=++st.k, T=st.threads.length, mx=c.inf?'MAX':c.max;
+    if(T<c.core){st.threads.push(id);st.log.push('task '+id+': threads '+T+' < core '+c.core+' → new thread T'+(T+1));}
+    else if(st.queue.length<c.cap){st.queue.push(id);let msg='task '+id+': threads '+T+' ≥ core '+c.core+' → queue.offer() ok'+(c.cap===Infinity?'':' ('+st.queue.length+'/'+c.cap+')');
+      if(T===0){const h=st.queue.shift();st.threads.push(h);msg+=' — but 0 threads exist, so the pool starts T1; it takes task '+h+' from the queue';}
+      st.log.push(msg);}
+    else if(T<c.max){st.threads.push(id);st.log.push('task '+id+': '+(c.cap===0?'SynchronousQueue: nobody waiting':'queue full')+', threads '+T+' < max '+mx+' → new thread T'+(T+1));}
+    else{st.rej.push(id);st.log.push('task '+id+': queue full, threads '+T+' = max → REJECTED');}
+  }
+  function chips(arr,cls,label,limit){
+    if(!arr.length)return '<span class="chip empty">empty</span>';
+    const shown=arr.slice(0,limit).map((id,i)=>'<span class="chip '+cls+'">'+label(id,i)+'</span>').join('');
+    return shown+(arr.length>limit?'<span class="more">+'+(arr.length-limit)+' more</span>':'');
+  }
+  function draw(){
+    const c=st.c;
+    q('[data-o=th]').innerHTML=chips(st.threads,'th',(id,i)=>'T'+(i+1)+': task '+id,40)+'<span class="more">&nbsp;'+st.threads.length+' thread'+(st.threads.length===1?'':'s')+'</span>';
+    q('[data-o=qu]').innerHTML=chips(st.queue,'qu',id=>'task '+id,40)+'<span class="more">&nbsp;'+st.queue.length+' / '+(c.cap===Infinity?'≈2 billion':c.cap)+'</span>';
+    q('[data-o=rj]').innerHTML=chips(st.rej,'rj',id=>'task '+id,40)+'<span class="more">&nbsp;'+st.rej.length+'</span>';
+    const lg=q('[data-o=log]');
+    lg.innerHTML=st.log.length?st.log.map(l=>'<div>'+esc(l)+'</div>').join(''):'<div>No tasks yet. Press "Submit 1 task".</div>';
+    lg.scrollTop=lg.scrollHeight;
+  }
+  el.querySelectorAll('[data-k]').forEach(i=>i.addEventListener('change',()=>{el.querySelectorAll('.pre button').forEach(b=>b.classList.remove('on'));reset()}));
+  q('[data-a=one]').onclick=()=>{if(st.bad)return;add();draw()};
+  q('[data-a=all]').onclick=()=>{if(st.bad)return;const r=st.c.n-st.k;for(let i=0;i<Math.max(r,0);i++)add();if(r<=0){for(let i=0;i<st.c.n;i++)add()}draw()};
+  q('[data-a=reset]').onclick=reset;
+  el.querySelectorAll('.pre button').forEach(b=>b.onclick=()=>{
+    const [core,max,qt,cap,n]=b.dataset.p.split(',');
+    inp('core').value=core; inp('inf').checked=max==='inf'; if(max!=='inf')inp('max').value=max; inp('qt').value=qt; if(qt==='abq')inp('cap').value=cap; inp('n').value=n;
+    el.querySelectorAll('.pre button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
+    reset(); for(let i=0;i<+n;i++)add(); draw();
+  });
+  reset();
+}
+
+/* ---------- rejection demo ---------- */
+function initReject(el){
+  const D={
+    'AbortPolicy':{rows:[['task0','ran on pool thread 1','t'],['task1','waited in the queue, then ran on pool thread 1','t'],['task2','REJECTED: execute() threw RejectedExecutionException in main','r']],sum:'Ran 2 of 3. The caller got an exception.'},
+    'DiscardPolicy':{rows:[['task0','ran on pool thread 1','t'],['task1','waited in the queue, then ran on pool thread 1','t'],['task2','dropped silently — no error, no trace','r']],sum:'Ran 2 of 3. Nobody was told.'},
+    'DiscardOldestPolicy':{rows:[['task0','ran on pool thread 1','t'],['task1','was the oldest in the queue → removed, never ran','r'],['task2','took task1\u2019s place in the queue, then ran on pool thread 1','t']],sum:'Ran 2 of 3. The newest task won.'},
+    'CallerRunsPolicy':{rows:[['task0','ran on pool thread 1','t'],['task1','waited in the queue, then ran on pool thread 1','t'],['task2','ran on main — the thread that called execute()','qq']],sum:'Ran 3 of 3. main was busy while running task2.'}
+  };
+  el.innerHTML='<div class="rj"><div class="pols" role="group" aria-label="Rejection policy">'+Object.keys(D).map(k=>'<button aria-pressed="false" data-k="'+k+'">'+k+'</button>').join('')+'</div><div data-o="res"></div></div>';
+  function show(k){
+    el.querySelectorAll('.pols button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.k===k));
+    const d=D[k];
+    el.querySelector('[data-o=res]').innerHTML=d.rows.map(r=>'<div class="row"><b>'+r[0]+'</b><span class="'+r[2]+'">'+r[1]+'</span></div>').join('')+'<p class="sum">'+d.sum+'</p>';
+  }
+  el.querySelectorAll('.pols button').forEach(b=>b.onclick=()=>show(b.dataset.k));
+  show('AbortPolicy');
+}
+
+render(false);
+</script>
+</body>
+</html>
