@@ -494,7 +494,8 @@ S("Single: when to use",
  P(`Typical uses:`),
  P(`<ul><li>ordered writes to one file or socket</li><li>one owner of some mutable state ("actor" style)</li><li>event loops</li></ul>`),
  P(`Danger: throughput of one thread + unbounded queue.`),
- R(`Non-thread-safe code? Run it all on one single-thread executor.`)),
+ P(`Careful: this protects the data only if <b>nothing else</b> touches it. Code running on other threads can still reach the same object. (Submitting to any executor is thread-safe; that's not what "single" adds.)`),
+ R(`Non-thread-safe code? Run it all on one single-thread executor — and only there.`)),
 S("newScheduledThreadPool(n) — timers",
  C(String.raw`ScheduledExecutorService timer = Executors.newScheduledThreadPool(1);
 
@@ -550,7 +551,8 @@ try (var ex = Executors.newVirtualThreadPerTaskExecutor()) {
  R(`Virtual threads: for IO, and add your own limit.`)),
 S("newWorkStealingPool() — ForkJoinPool",
  P(`Each worker has its own task deque. An idle worker <b>steals</b> tasks from a busy one.`),
- P(`Parallelism = number of cores by default. Good for many small CPU tasks, e.g. divide-and-conquer. (It's the same kind of pool as the common pool behind <code>parallelStream</code>.)`),
+ P(`Parallelism = number of cores by default, and it stays fixed: it doesn't grow like a cached pool (it only adds temporary helper threads when a worker blocks waiting for a sub-task). Good for many small CPU tasks, e.g. divide-and-conquer.`),
+ P(`It's the same kind of pool as <code>ForkJoinPool.commonPool()</code>, the shared pool behind <code>parallelStream</code>. The common pool's default parallelism is <b>cores − 1</b> (at least 1), because the calling thread usually helps too.`),
  P(`Its threads are <b>daemon</b> → the JVM won't wait for them:`),
  C(String.raw`public static void main(String[] args) {
     ExecutorService ws = Executors.newWorkStealingPool();
@@ -611,7 +613,42 @@ ThreadFactory factory = r -> {
         .uncaughtExceptionHandler(handler)
         .factory();`),
  P(`Pass it as the 6th constructor argument.`),
- R(`Named threads make logs and thread dumps readable.`))
+ R(`Named threads make logs and thread dumps readable.`)),
+S("The one rule of ThreadFactory: wrap r",
+ P(`The pool calls <code>newThread(r)</code>, and <code>r</code> is the pool's <b>worker loop</b> (the code that takes tasks from the queue). Your thread must run <b>that</b>.`),
+ P(`A factory that ignores <code>r</code>:`),
+ C(String.raw`ThreadFactory broken = r -> {                       // r = the pool's worker loop...
+    Thread t = new Thread(() -> System.out.println("my own code, not r"));   // ...ignored!
+    return t;
+};
+ExecutorService ex = Executors.newFixedThreadPool(1, broken);
+for (int i = 0; i < 3; i++) { int id = i; ex.submit(() -> System.out.println("task " + id + " ran")); }
+ex.shutdown();
+System.out.println("terminated within 2 s? " + ex.awaitTermination(2, TimeUnit.SECONDS));
+System.out.println("tasks stuck in the queue: " + ((ThreadPoolExecutor) ex).getQueue().size());`),
+ O(`my own code, not r
+terminated within 2 s? false
+tasks stuck in the queue: 2`),
+ P(`The thread ran its own code and ended. The pool's worker loop never ran, so no task ever executed and the pool never finished. (The third task was handed to that worker directly, so it's lost too.)`),
+ P(`The correct shape: wrap <code>r</code>, and only add name and handler around it:`),
+ C(String.raw`AtomicInteger n = new AtomicInteger();
+ThreadFactory good = r -> {
+    Thread t = new Thread(r, "worker-" + n.incrementAndGet());    // wrap r!
+    t.setUncaughtExceptionHandler((th, e) -> System.out.println("uncaught in " + th.getName() + ": " + e));
+    return t;
+};
+ExecutorService ex = Executors.newFixedThreadPool(1, good);
+for (int i = 0; i < 3; i++) {
+    int id = i;
+    ex.submit(() -> System.out.println("task " + id + " ran on " + Thread.currentThread().getName()));
+}
+ex.shutdown();
+System.out.println("terminated within 2 s? " + ex.awaitTermination(2, TimeUnit.SECONDS));`),
+ O(`task 0 ran on worker-1
+task 1 ran on worker-1
+task 2 ran on worker-1
+terminated within 2 s? true`),
+ R(`new Thread(r, name) — always build the thread around r.`)),
 ]},
 
 {t:"When it's full: rejection policies",steps:[
@@ -722,6 +759,27 @@ S("execute vs submit",
  C(String.raw`ex.execute(runnable);                    // fire and forget, no result
 Future<Integer> f = ex.submit(callable);  // result (or exception) later`),
  R(`execute = no handle. submit = a Future.`)),
+S("Example: both return immediately",
+ C(String.raw`ExecutorService ex = Executors.newFixedThreadPool(2);
+Runnable oneSecond = () -> sleep(1000);
+
+long t0 = System.nanoTime();
+ex.execute(oneSecond);
+System.out.printf("execute() returned after %d ms%n", (System.nanoTime() - t0) / 1_000_000);
+
+t0 = System.nanoTime();
+Future<?> f = ex.submit(oneSecond);
+System.out.printf("submit() returned after %d ms%n", (System.nanoTime() - t0) / 1_000_000);
+
+t0 = System.nanoTime();
+try { f.get(); } catch (ExecutionException e) { }
+System.out.printf("f.get() returned after %d ms  <- get() is what waits%n", (System.nanoTime() - t0) / 1_000_000);
+ex.shutdown();`),
+ O(`execute() returned after 0 ms
+submit() returned after 0 ms
+f.get() returned after 1000 ms  <- get() is what waits`),
+ P(`Neither <code>execute</code> nor <code>submit</code> waits for the task. The difference is only what you get back: nothing, or a <code>Future</code> (which also holds the task's exception). Waiting happens in <code>get()</code>.`),
+ R(`execute and submit both hand over and return. get() waits.`)),
 S("shutdown()",
  P(`<ul><li>Stops accepting new tasks (they get rejected).</li><li>Tasks already queued <b>will</b> still run.</li><li>Returns <b>immediately</b>. It does not wait!</li></ul>`),
  R(`shutdown = "no more, finish what you have".`)),
@@ -794,6 +852,7 @@ get() = 42
 isDone now? true
 timed out -> cancel(true) = true, isCancelled = true
 ExecutionException, cause = java.lang.IllegalStateException: bad input`),
+ P(`<code>get()</code> is <b>not</b> a callback: it blocks the calling thread until the result is there. For "call me when it's done", see the next step (<code>CompletableFuture</code>).`),
  P(`<ul><li><code>get()</code> waits for the result. <code>get(timeout)</code> waits at most that long, then throws <code>TimeoutException</code>.</li>
  <li><code>cancel(true)</code> interrupts the running task (it must react to interrupts to actually stop).</li>
  <li>An exception inside the task comes out of <code>get()</code> wrapped in <code>ExecutionException</code>. <code>getCause()</code> gives you the original.</li></ul>`),
@@ -857,6 +916,17 @@ S("Who printed that stack trace?",
  C(String.raw`Thread.setDefaultUncaughtExceptionHandler((thread, e) ->
         System.err.println("crash in " + thread.getName() + ": " + e));`),
  R(`Set a handler to log, alert, or react properly.`)),
+S("Example: a handler for one thread",
+ P(`<code>setUncaughtExceptionHandler</code> sets a handler for one thread only (the global one is <code>setDefaultUncaughtExceptionHandler</code>).`),
+ C(String.raw`Thread child = new Thread(() -> { throw new RuntimeException("keks"); }, "child-7");
+child.setUncaughtExceptionHandler((t, e) ->
+        System.out.println("handler runs on: " + Thread.currentThread().getName()
+                + ", failed thread: " + t.getName() + ", error: " + e.getMessage()));
+child.start();
+child.join();`),
+ O(`handler runs on: child-7, failed thread: child-7, error: keks`),
+ P(`The handler runs <b>on the thread that failed</b>, just before it dies. Use its parameter (<code>t</code>) to know which thread it was.`),
+ R(`The handler runs on the dying thread itself.`)),
 S("Interview: a request handler throws on the server",
  Q(`Tomcat / Spring Boot: one request handler throws an unhandled exception. What happens to the server?`,
    `<p><b>Nothing happens to the server.</b> Only that request's thread is affected.</p>
@@ -1125,7 +1195,7 @@ S("Build v4: does shutdown really finish?",
  Y(`The lecturer asked the group: "I have 10 workers, I submit tasks, then I say shutdown(). Is it guaranteed the pool closes?" A student pointed at task.run(): "it can just run and run."`),
  Y(`"Inside a submitted Runnable someone can write while (true) {} and your shutdown flag is irrelevant. If you write a crooked Runnable, nothing can be done about it. Period."`),
  P(`<b>Questions:</b>`),
- P(`<ul><li>After <code>shutdown()</code>, do already-queued tasks still run?</li><li>What if a task never ends?</li><li>How does a caller wait until the pool is done?</li></ul>`),
+ P(`<ul><li>After <code>shutdown()</code>, do already-queued tasks still run?</li><li>What should <code>submit()</code> do after <code>shutdown()</code>? (Accepting it silently means it will never run.)</li><li>What if a task never ends?</li><li>How does a caller wait until the pool is done?</li></ul>`),
  P(`Add <code>shutdownNow()</code> (returns tasks that never ran) and <code>awaitTermination(timeout)</code>.`),
  Q(`Hint`, `<p>Keep references to your worker threads so you can interrupt and join them. Test with the polite and rude tasks from Tool 5. Also: what should a worker do when its waiting call throws InterruptedException but the pool is NOT shut down?</p>`),
  R(`Graceful stop, forced stop, wait — three different things.`)),

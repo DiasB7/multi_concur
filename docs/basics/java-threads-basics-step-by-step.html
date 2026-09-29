@@ -445,6 +445,29 @@ S("4: it juggles everything on the machine",
  P(`Your JVM, Chrome, a YouTube video, your IDE — the scheduler shares the cores between all of them.`),
  P(`A student asked why the IDE freezes while YouTube plays smoothly. The scheduler has its own idea of who is more important — in the lecturer's words, "from the OS's perspective YouTube is the favourite".`),
  R(`Your program is one of many competing for cores.`)),
+S("What is a context switch?",
+ P(`A core runs one thread at a time. To run another, the OS <b>saves</b> the current thread's state (registers, program counter, stack pointer) and <b>loads</b> the other's. That swap is a <b>context switch</b>.`),
+ P(`It costs time, and the new thread often starts with "cold" caches: its data isn't in L1/L2 yet.`),
+ P(`Measured: two threads throwing a value back and forth, so every hand-over forces a switch (this machine has 1 core):`),
+ C(String.raw`final int ROUNDS = 100_000;
+SynchronousQueue<Integer> ping = new SynchronousQueue<>(), pong = new SynchronousQueue<>();
+
+Thread other = new Thread(() -> {
+    try { for (int i = 0; i < ROUNDS; i++) pong.put(ping.take()); }   // take the ball, throw it back
+    catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+});
+other.start();
+
+long t0 = System.nanoTime();
+for (int i = 0; i < ROUNDS; i++) { ping.put(i); pong.take(); }        // throw, wait for it back
+long ns = System.nanoTime() - t0;
+other.join();
+System.out.printf("%d round trips: %.1f µs per hand-over between threads%n",
+        ROUNDS, ns / 1000.0 / (2.0 * ROUNDS));`),
+ O(`100000 round trips: 2.1 µs per hand-over between threads      <- 2.1–2.9 µs across runs`),
+ P(`A couple of microseconds sounds tiny, but normal work takes nanoseconds: one switch costs as much as thousands of simple operations.`),
+ P(`That's why "more threads than cores" doesn't help CPU work (the extra threads only add switches), and why low-latency code avoids sleeping and waking threads on the hot path.`),
+ R(`Context switch = the OS swapping threads on a core. Microseconds, not free.`)),
 S("5: OS states vs Java states",
  P(`The OS has its own thread states (<i>ready</i>, <i>running</i>, and more).`),
  P(`<b>Java doesn't show them.</b> A started thread that isn't waiting is just <code>RUNNABLE</code> — whether it's on a core right now or queued for one.`),
@@ -745,6 +768,30 @@ System.out.println("count = " + count.get());`),
  O(`count = 2000000`),
  P(`If another thread changed the value between the read and the write, <code>compareAndSet</code> fails and the loop simply tries again. No lock, no lost updates.`),
  R(`CAS = "write only if nobody changed it, else retry". Lecture 3 goes deep.`)),
+S("★ Deeper: blocking vs spinning vs lock-free",
+ P(`Three ways a thread can deal with "I can't continue yet":`),
+ P(`<ul><li><b>Blocking:</b> park and let the OS wake you later. Uses no CPU while waiting, but waking up costs a context switch.</li>
+ <li><b>Spinning:</b> keep checking in a loop. Reacts fastest, but burns a whole core the entire time.</li>
+ <li><b>Lock-free:</b> don't wait for anyone at all — try with CAS, and retry if someone else won. CPU is spent only on retries, which grow under heavy contention.</li></ul>`),
+ P(`Measured, the first two, each waiting about 1 second:`),
+ C(String.raw`ThreadMXBean mx = ManagementFactory.getThreadMXBean();
+
+Thread parked = new Thread(() -> LockSupport.parkNanos(1_000_000_000L));    // wait 1 s, BLOCKING
+Thread spinner = new Thread(() -> {                                          // wait 1 s, SPINNING
+    long end = System.nanoTime() + 1_000_000_000L;
+    while (System.nanoTime() < end) Thread.onSpinWait();
+});
+for (Thread t : List.of(parked, spinner)) {
+    t.start();
+    sleep(950);                                                   // measure while it's still alive
+    System.out.printf("%-8s used %4d ms of CPU while waiting ~1 s%n",
+            t == parked ? "parked:" : "spinner:", mx.getThreadCpuTime(t.threadId()) / 1_000_000);
+    t.join();
+}`),
+ O(`parked:  used    0 ms of CPU while waiting ~1 s
+spinner: used  947 ms of CPU while waiting ~1 s`),
+ P(`So "lock-free = high CPU" isn't quite right. High CPU comes from <b>spinning</b> (or many CAS retries under heavy contention). Blocking is cheap on CPU but slow to react. Low-latency systems deliberately spin on dedicated cores; ordinary services block.`),
+ R(`Blocking saves CPU. Spinning saves reaction time. Lock-free avoids waiting for a lock holder.`)),
 S("Check-then-act: the same bug in disguise",
  C(String.raw`if (!map.containsKey(k)) {   // check
     map.put(k, v);           // act — another thread may have put k in between
@@ -1037,11 +1084,65 @@ S("With a lambda and a name",
 t.start();`),
  P(`Always <b>name</b> your threads. Names show up in thread dumps and logs.`),
  R(`Name every thread.`)),
+S("Passing data into a thread",
+ P(`A lambda (or anonymous class) can <b>read</b> local variables from around it, but only if they are <b>effectively final</b>: never changed after being set.`),
+ C(String.raw`int count = 0;
+Thread t = new Thread(() -> count++);`),
+ O(`error: local variables referenced from a lambda expression must be final or effectively final
+Thread t = new Thread(() -> count++);
+                            ^`),
+ P(`(Real <code>javac</code> output.) Why the rule? The lambda gets a <b>copy</b> of the value. If Java let you change the variable, the copy and the original would silently disagree — and with threads, two threads would be changing a local variable that lives on one thread's stack.`),
+ R(`Lambdas capture values, not variables. Those values must never change.`)),
+S("Example: three safe ways to pass data",
+ C(String.raw`// Way 1: a fresh copy per loop step
+for (int i = 1; i <= 3; i++) {
+    int id = i;                                   // new variable each time, never changed -> effectively final
+    new Thread(() -> System.out.println("way 1: task " + id)).start();
+}
+sleep(200);
+
+// Way 2: give the Runnable its own fields
+record Job(int id, String name) implements Runnable {
+    public void run() { System.out.println("way 2: job " + id + " (" + name + ")"); }
+}
+Thread j = new Thread(new Job(7, "report"));
+j.start(); j.join();
+
+// Way 3: a shared THREAD-SAFE object for results
+AtomicInteger total = new AtomicInteger();
+List<Thread> threads = new ArrayList<>();
+for (int i = 1; i <= 4; i++) {
+    int add = i * 10;
+    Thread t = new Thread(() -> total.addAndGet(add));   // the reference 'total' never changes
+    threads.add(t);
+    t.start();
+}
+for (Thread t : threads) t.join();
+System.out.println("way 3: total = " + total.get());`),
+ O(`way 1: task 1
+way 1: task 2
+way 1: task 3
+way 2: job 7 (report)
+way 3: total = 100`),
+ P(`(Way 1's order can vary between runs.)`),
+ P(`<ul><li><b>Way 1:</b> copy the loop counter into a new local (<code>int id = i</code>). You'll see this in every exercise.</li>
+ <li><b>Way 2:</b> a class or record that <code>implements Runnable</code> and keeps its own fields.</li>
+ <li><b>Way 3:</b> for results, share a <b>thread-safe</b> object (<code>AtomicInteger</code>, a concurrent collection). The variable <code>total</code> never changes — only the object it points to does.</li></ul>`),
+ P(`Beware the "array trick" (<code>int[] box = {0}; ... box[0]++</code>). It compiles, but it's a plain shared variable: races and visibility bugs, exactly like chapter 10.`),
+ R(`Copy per loop step, own fields, or a thread-safe object. Never a plain shared variable.`)),
 S("new is not start",
  P(`<code>new Thread(...)</code>: just a Java object. State = <code>NEW</code>.`),
  P(`<code>start()</code>: the expensive talk with the OS happens <b>here</b>. In HotSpot the native thread is created inside <code>start()</code>. State → <code>RUNNABLE</code>.`),
  P(`A <code>Thread</code> object that is never started is a plain object. The garbage collector removes it like any other. (A student asked: "will all those threads I created in a loop get deleted?" — if you never <code>start()</code> them, yes.)`),
  R(`new = object. start() = real OS thread.`)),
+S("Example: a Thread with no Runnable",
+ C(String.raw`Thread empty = new Thread();        // no Runnable
+empty.start();
+empty.join();
+System.out.println(empty.getState() + " - nothing printed, no error");`),
+ O(`TERMINATED - nothing printed, no error`),
+ P(`With no Runnable, <code>run()</code> has nothing to do: the thread starts and ends at once, silently.`),
+ R(`No Runnable = a thread that does nothing and ends.`)),
 S("The Runnable is the thread's whole job",
  Y(`"A thread is heavy; its Runnable — the stack it will execute — is a few bytes. That line is the entire stack of this thread. When it finishes, the thread is done."`),
  P(`The <code>Runnable</code> is how you hand the thread its work for when the scheduler says "go".`),
@@ -1326,6 +1427,16 @@ public static void main(String[] args) throws Exception {
 with join:    total = 50000005000000`),
  P(`Without <code>join()</code>, main read the fields before the threads had written them. No error, no warning — just a wrong number.`),
  R(`Need a thread's result? join() first.`)),
+S("join() works on any thread, daemons too",
+ C(String.raw`Thread d = new Thread(() -> { sleep(300); System.out.println("daemon finished"); });
+d.setDaemon(true);
+d.start();
+d.join();                           // join() waits for daemons too
+System.out.println("main continues after join()");`),
+ O(`daemon finished
+main continues after join()`),
+ P(`The JVM doesn't wait for daemons at exit, but you can always wait for one yourself with <code>join()</code>.`),
+ R(`join() waits for the thread you name — daemon or not.`)),
 ]},
 
 {part:"02",t:"Daemon threads",steps:[
@@ -1636,6 +1747,19 @@ virtual sleeping: TIMED_WAITING
 inside virtual: VirtualThread[#33]/runnable@ForkJoinPool-1-worker-1   <- its carrier`),
  P(`Everything from chapters 16–19 still applies: same six states, same <code>interrupt()</code>, same design rules.`),
  R(`Same Thread API. Always daemon.`)),
+S("Example: a virtual thread can be BLOCKED too",
+ C(String.raw`Object lock = new Object();
+Thread v;
+synchronized (lock) {
+    v = Thread.ofVirtual().start(() -> { synchronized (lock) { } });
+    sleep(200);
+    System.out.println("virtual thread waiting for synchronized: " + v.getState());
+}
+v.join();`),
+ O(`virtual thread waiting for synchronized: BLOCKED`),
+ P(`Virtual threads use the same six states. Waiting to enter <code>synchronized</code> shows <code>BLOCKED</code>, just like a platform thread.`),
+ P(`(On JDK 21–23 it also pins its carrier while blocked there; JDK 24+ lets it unmount.)`),
+ R(`Virtual or platform: same states, same meaning.`)),
 S("How to create them",
  C(String.raw`// one-off
 Thread.ofVirtual().name("vt-1").start(() -> work());
